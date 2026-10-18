@@ -350,13 +350,33 @@ async def chat(req: ChatRequest):
 @app.get("/admin")
 @app.get("/admin/")
 async def admin_page():
-    admin_file = FRONTEND_DIR / "admin.html"
-    if not admin_file.is_file():
-        raise HTTPException(
-            status_code=404,
-            detail=f"admin.html не найден по пути: {admin_file}"
-        )
-    return FileResponse(admin_file)
+    # Проверяем все возможные расположения frontend
+    possible_paths = [
+        Path("/app/frontend/admin.html"),
+        Path(__file__).resolve().parent.parent / "frontend" / "admin.html",
+        Path(__file__).resolve().parent / "frontend" / "admin.html",
+        Path("frontend/admin.html"),
+        Path("../frontend/admin.html"),
+    ]
+    
+    for p in possible_paths:
+        if p.is_file():
+            return FileResponse(p)
+
+    # Если нигде не нашли, покажем текущее дерево файлов для точной диагностики
+    cwd_files = []
+    for root, dirs, files in os.walk("/app"):
+        for f in files:
+            cwd_files.append(os.path.join(root, f))
+
+    raise HTTPException(
+        status_code=404,
+        detail={
+            "error": "admin.html не найден",
+            "searched_paths": [str(p) for p in possible_paths],
+            "files_in_container": cwd_files[:25]
+        }
+    )
 
 if FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
