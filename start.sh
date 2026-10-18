@@ -6,5 +6,5 @@ if [ ! -d .venv ]; then python3 -m venv .venv; fi
 .venv/bin/python -m pip install --disable-pip-version-check -r backend/requirements.txt
 if [ ! -f backend/.env ]; then cp backend/.env.example backend/.env; fi
 printf '\nGuest menu: http://127.0.0.1:8000\nAdmin panel: http://127.0.0.1:8000/admin\nFirst-start admin password appears in the server output below.\n\n'
-cd backend
-exec ../.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000
+export HOST="${HOST:-127.0.0.1}"
+exec .venv/bin/python backend/serve.py

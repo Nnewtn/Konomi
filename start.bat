@@ -11,8 +11,8 @@ if not exist backend\.env copy backend\.env.example backend\.env >nul
 echo Guest menu: http://127.0.0.1:8000
 echo Admin panel: http://127.0.0.1:8000/admin
 echo First-start admin password appears in the server output below.
-cd backend
-..\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
+if not defined HOST set HOST=127.0.0.1
+.venv\Scripts\python.exe backend\serve.py
 pause
 exit /b
 :fail

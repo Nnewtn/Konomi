@@ -1,302 +1,124 @@
-/* ============================================================
-   KONOMI AI v2 · frontend engine (Vanilla JS, fetch → FastAPI)
-   ============================================================ */
-const API = location.origin; // фронт раздаётся тем же сервером; для раздельного деплоя замените на URL бэкенда
-
-/* ---------- state ---------- */
-const S = { lang:"ru", cat:"all", filters:new Set(), cart:new Map(), comboApplied:false,
-            menu:[], weather:null, history:[], sheet:"collapsed" };
-const $ = s => document.querySelector(s), $$ = s => document.querySelectorAll(s);
-const t = k => I18N[S.lang][k] ?? k;
-const esc = s => s.replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const md = s => esc(s).replace(/\*\*(.+?)\*\*/g,"<b>$1</b>").replace(/\n/g,"<br>");
-
-/* ---------- i18n ---------- */
-const I18N = {
-  ru:{ venue_sub:"Restauracja Rodzinna", empty:"Под эти фильтры ничего не подошло — спросите Konomi AI.",
-       cart_cta:"Показать официанту", ai_status:"Сомелье онлайн · знает состав и аллергены",
-       input_ph:"Спросите Konomi AI про блюда или комбо…", receipt:" · Чек гостя", total:"Итого",
-       show_code:"Покажите код официанту", add:"В заказ", added:"Добавлено",
-       tab_all:"Все", tab_soup:"Супы", tab_main:"Горячее", tab_bev:"Напитки и десерты",
-       chip_hit:"Хиты кухни", chip_gf:"Без глютена", chip_np:"Без свинины",
-       cat:{soup:"Суп",main:"Горячее",beverage:"Напиток",dessert:"Десерт"},
-       alg:{gluten:"глютен",pork:"свинина",lactose:"лактоза"},
-       greet:(w)=>`Добрый ${({morning:"день",lunch:"день",evening:"вечер",night:"вечер"})[w?.time_slot||"evening"]}. В Łódź сейчас ${w?.temp ?? "—"}°C, ${COND.ru[w?.condition]||""} — ${w && (w.temp<12||["rain","drizzle","snow","storm"].includes(w.condition)) ? "я бы начал с чего-то согревающего: Rosół или Żurek." : "что приготовить для вас сегодня?"} Спросите про состав, аллергены или попросите собрать комбо со скидкой.`,
-       combo_title:"Комбо −15%", combo_sub:"Суп + основное + напиток", combo_add:"Добавить сет в заказ",
-       saves:"экономия", offline:"Связь с сомелье прервалась — попробуйте ещё раз.", view:"в меню" },
-  en:{ venue_sub:"Restauracja Rodzinna", empty:"No dishes match these filters — ask Konomi AI.",
-       cart_cta:"Show to waiter", ai_status:"Sommelier online · knows every allergen",
-       input_ph:"Ask Konomi AI about dishes or combos…", receipt:" · Guest check", total:"Total",
-       show_code:"Show the code to your waiter", add:"Add", added:"Added",
-       tab_all:"All", tab_soup:"Soups", tab_main:"Mains", tab_bev:"Drinks & Desserts",
-       chip_hit:"Kitchen hits", chip_gf:"Gluten-free", chip_np:"No pork",
-       cat:{soup:"Soup",main:"Main",beverage:"Drink",dessert:"Dessert"},
-       alg:{gluten:"gluten",pork:"pork",lactose:"lactose"},
-       greet:(w)=>`Good ${({morning:"morning",lunch:"afternoon",evening:"evening",night:"evening"})[w?.time_slot||"evening"]}. It's ${w?.temp ?? "—"}°C in Łódź${w?.condition?", "+COND.en[w.condition]:""} — ${w && (w.temp<12||["rain","drizzle","snow","storm"].includes(w.condition)) ? "may I suggest something warming first, like Rosół or Żurek?" : "what shall we start with?"} Ask about ingredients, allergens, or request a combo deal.`,
-       combo_title:"Combo −15%", combo_sub:"Soup + main + drink", combo_add:"Add combo to check",
-       saves:"you save", offline:"Connection lost — please try again.", view:"view" },
-  pl:{ venue_sub:"Kuchnia tradycyjna", empty:"Brak dań w tych filtrach — zapytaj Konomi AI.",
-       cart_cta:"Pokaż kelnerowi", ai_status:"Sommelier online · zna skład i alergeny",
-       input_ph:"Zapytaj Konomi AI o dania lub combo…", receipt:" · Rachunek", total:"Razem",
-       show_code:"Pokaż kod kelnerowi", add:"Dodaj", added:"Dodano",
-       tab_all:"Wszystko", tab_soup:"Zupy", tab_main:"Dania główne", tab_bev:"Napoje i desery",
-       chip_hit:"Hity kuchni", chip_gf:"Bez glutenu", chip_np:"Bez wieprzowiny",
-       cat:{soup:"Zupa",main:"Danie",beverage:"Napój",dessert:"Deser"},
-       alg:{gluten:"gluten",pork:"wieprzowina",lactose:"laktoza"},
-       greet:(w)=>`Dzień dobry. W Łodzi jest teraz ${w?.temp ?? "—"}°C — ${w && (w.temp<12||["rain","drizzle","snow","storm"].includes(w.condition)) ? "polecam zacząć od rozgrzewającego Rosołu lub Żurku." : "od czego zaczynamy?"} Zapytaj o skład, alergeny lub combo ze zniżką.`,
-       combo_title:"Combo −15%", combo_sub:"Zupa + danie + napój", combo_add:"Dodaj combo",
-       saves:"oszczędzasz", offline:"Brak połączenia — spróbuj ponownie.", view:"zobacz" }
+'use strict';
+const {esc:E,icon:I}=K;
+const $=s=>document.querySelector(s);
+const L={
+ ru:{menu:'Меню',count:'позиций',categories:['Все','Супы','Горячее','Напитки и десерты','Закуски','Другое'],filters:['Хиты кухни','Без глютена','Без свинины'],empty:'Нет подходящих блюд. Уберите фильтр или спросите официанта.',add:'Добавить в заказ',stopped:'Временно нет',unknown:'Состав уточняется',photo:'Иллюстрация подачи',chat:'Ваш проводник по меню',greet:'Добро пожаловать в Gęsi Puch. Расскажу о блюдах, помогу с выбором и соберу комбо. При аллергии обязательно уточните состав и перекрестные контакты у официанта.',cool:' В прохладную погоду приятно начать с горячего Rosół.',quick:['Без свинины','Сытно до 100 PLN','Комбо со скидкой'],input:'Спросите про блюда или комбо…',cart:'Ваш заказ',show:'Показать официанту',total:'Итого',clear:'Очистить',checkout:'Сформировать чек',notice:'Это чек для показа официанту, не автоматическая отправка на кухню.',receipt:'Чек гостя',combo:'Комбо',set:'Добавить сет',saving:'Выгода',checking:'Проверяем цены и доступность…',reset:'Сбросить',diet:'Исключения',thinking:'Подбираю блюда…',voice:'Голосовой ввод недоступен. Используйте текст.',error:'Не удалось получить ответ. Попробуйте ещё раз.',retry:'Повторить',load:'Не удалось загрузить меню.',emptyCart:'В корзине пока нет блюд.',remove:'Удалить',rules:'Локальный помощник',gemini:'ИИ-сомелье',allergens:{gluten:'глютен',pork:'свинина',lactose:'лактоза',milk:'молоко',egg:'яйцо',fish:'рыба',nuts:'орехи'}},
+ en:{menu:'Menu',count:'dishes',categories:['All','Soups','Mains','Drinks & desserts','Starters','Other'],filters:['Kitchen hits','Gluten-free','No pork'],empty:'No matching dishes. Remove a filter or ask your waiter.',add:'Add to order',stopped:'Unavailable',unknown:'Confirm ingredients',photo:'Serving illustration',chat:'Your guide to the menu',greet:'Welcome to Gęsi Puch. I can explain dishes and help build a combo. If you have allergies, always confirm ingredients and cross-contact with your waiter.',cool:' A hot Rosół is a lovely start in cool weather.',quick:['No pork','Hearty under 100 PLN','Combo deal'],input:'Ask about dishes or combos…',cart:'Your order',show:'Show to waiter',total:'Total',clear:'Clear',checkout:'Create guest check',notice:'This is a guest check to show your waiter, not an automatic kitchen order.',receipt:'Guest check',combo:'Combo',set:'Add set',saving:'Saving',checking:'Checking prices and availability…',reset:'Reset',diet:'Exclusions',thinking:'Finding dishes…',voice:'Voice input unavailable. Please type.',error:'Could not get a response. Please retry.',retry:'Retry',load:'Could not load menu.',emptyCart:'Your cart is empty.',remove:'Remove',rules:'Local assistant',gemini:'AI sommelier',allergens:{gluten:'gluten',pork:'pork',lactose:'lactose',milk:'milk',egg:'egg',fish:'fish',nuts:'nuts'}},
+ pl:{menu:'Menu',count:'pozycji',categories:['Wszystko','Zupy','Dania główne','Napoje i desery','Przystawki','Inne'],filters:['Hity kuchni','Bez glutenu','Bez wieprzowiny'],empty:'Brak pasujących dań. Zmień filtr lub zapytaj kelnera.',add:'Dodaj do zamówienia',stopped:'Niedostępne',unknown:'Potwierdź skład',photo:'Przykładowe podanie',chat:'Twój przewodnik po menu',greet:'Witamy w Gęsim Puchu. Pomogę wybrać dania i złożyć zestaw. Przy alergii zawsze potwierdź skład i ryzyko kontaktu krzyżowego z kelnerem.',cool:' W chłodną pogodę warto zacząć od gorącego rosołu.',quick:['Bez wieprzowiny','Sycąco do 100 PLN','Combo ze zniżką'],input:'Zapytaj o dania lub combo…',cart:'Twoje zamówienie',show:'Pokaż kelnerowi',total:'Razem',clear:'Wyczyść',checkout:'Utwórz rachunek',notice:'Rachunek do pokazania kelnerowi, bez automatycznej wysyłki na kuchnię.',receipt:'Rachunek gościa',combo:'Combo',set:'Dodaj zestaw',saving:'Oszczędność',checking:'Sprawdzamy ceny i dostępność…',reset:'Resetuj',diet:'Wykluczenia',thinking:'Wybieram dania…',voice:'Wpisz wiadomość — głos niedostępny.',error:'Nie udało się uzyskać odpowiedzi. Spróbuj ponownie.',retry:'Ponów',load:'Nie udało się załadować menu.',emptyCart:'Koszyk jest pusty.',remove:'Usuń',rules:'Lokalny pomocnik',gemini:'AI sommelier',allergens:{gluten:'gluten',pork:'wieprzowina',lactose:'laktoza',milk:'mleko',egg:'jajko',fish:'ryba',nuts:'orzechy'}}
 };
-const COND = {
-  ru:{clear:"ясно",cloudy:"облачно",fog:"туман",drizzle:"морось",rain:"дождь",snow:"снег",storm:"гроза"},
-  en:{clear:"clear",cloudy:"cloudy",fog:"fog",drizzle:"drizzle",rain:"rain",snow:"snow",storm:"storm"}
-};
-/* Тонкие SVG-иконки 16×16, stroke 1.5 */
-const ICON = {
-  hit:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 3l2.7 5.6 6.1.8-4.5 4.2 1.1 6-5.4-2.9-5.4 2.9 1.1-6L3.2 9.4l6.1-.8L12 3z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
-  gf:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 20L20 4M7 4c0 5 2 8 5 9M17 20c0-5-2-8-5-9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
-  np:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 6.5l11 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
-  rain:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M7 15a5 5 0 01-.9-9.9A6 6 0 0117.7 7 4.5 4.5 0 0117 16H7z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M9 19l-1 2.5M14 19l-1 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
-  sun:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.5"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
-  cloud:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M7 16a5 5 0 01-.9-9.9A6 6 0 0117.7 8 4.5 4.5 0 0117 17H7z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
-  snow:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 4v16M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
-  storm:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M13 3L6 13h5l-1 8 7-11h-5l1-7z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
-  fog:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 9h14M4 13h16M6 17h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>'
-};
-const wIcon = c => ({clear:ICON.sun,rain:ICON.rain,drizzle:ICON.rain,snow:ICON.snow,storm:ICON.storm,fog:ICON.fog}[c] || ICON.cloud);
+const S={lang:['ru','en','pl'].includes(K.read('konomi-lang','ru'))?K.read('konomi-lang','ru'):'ru',menu:[],cat:'all',filters:new Set(),lines:[],history:[],excludes:[],quote:null,busy:false,opened:false,venue:'Gęsi Puch',idempotency:null};
+const t=k=>L[S.lang][k];
+const money=v=>new Intl.NumberFormat(S.lang==='ru'?'ru-RU':S.lang==='en'?'en-GB':'pl-PL',{minimumFractionDigits:2,maximumFractionDigits:2}).format(v)+' PLN';
+const categories=['all','soup','main','beverage','starter','other'];
+let quoteController,quoteTimer,lastWeather=null,langGeneration=0;
 
-/* ---------- API ---------- */
-async function api(path, opts){ const r = await fetch(API+path, opts); if(!r.ok) throw new Error(r.status); return r.json(); }
-
-/* ---------- menu render ---------- */
-function dishOk(d){
-  if(S.cat!=="all"){ if(S.cat==="beverage"){ if(!["beverage","dessert"].includes(d.category)) return false; } else if(d.category!==S.cat) return false; }
-  for(const f of S.filters){
-    if(f==="hit" && !d.tags.includes("hit")) return false;
-    if(f==="gf" && d.allergens.includes("gluten")) return false;
-    if(f==="np" && d.allergens.includes("pork")) return false;
-  }
+function saveCart(){K.save('konomi-cart-v3',{lines:S.lines,excludes:S.excludes});S.idempotency=null;}
+function restoreCart(){const old=K.read('konomi-cart-v3',{});S.lines=Array.isArray(old.lines)?old.lines.filter(l=>Array.isArray(l.ids)&&l.ids.length>0&&l.ids.length<=3&&l.ids.every(i=>typeof i==='string')&&Number.isInteger(l.qty)&&l.qty>0&&l.qty<=30).slice(0,40).map(l=>({ids:l.ids,qty:l.qty,combo:!!l.combo})):[];S.excludes=Array.isArray(old.excludes)?old.excludes.filter(x=>typeof x==='string').slice(0,40):[];}
+function applyLanguage(){
+ document.documentElement.lang=S.lang; document.title=`Konomi AI — ${S.venue}`;
+ $('#menuTitle').textContent=t('menu');$('#messageInput').placeholder=t('input');$('#cartCta').textContent=t('show');$('#cartTitle').textContent=t('cart');$('#totalLabel').textContent=t('total');$('#checkout').textContent=t('checkout');$('#clearCart').textContent=t('clear');$('#checkNotice').textContent=t('notice');$('#receiptTitle').textContent=t('receipt');$('#clearDiet').textContent=t('reset');$('#engineLabel').textContent=t('chat');
+ document.querySelectorAll('[data-lang]').forEach(b=>{b.classList.toggle('active',b.dataset.lang===S.lang);b.setAttribute('aria-pressed',b.dataset.lang===S.lang);});
+ $('#tabs').innerHTML=categories.map((c,i)=>`<button data-cat="${c}" class="${S.cat===c?'active':''}" aria-pressed="${S.cat===c}">${E(t('categories')[i])}</button>`).join('');
+ $('#filters').innerHTML=['hit','gluten','pork'].map((f,i)=>`<button data-filter="${f}" class="${S.filters.has(f)?'active':''}" aria-pressed="${S.filters.has(f)}">${I(['star','grain-off','pork-off'][i])}${E(t('filters')[i])}</button>`).join('');
+ $('#quick').innerHTML=t('quick').map((q,i)=>`<button data-quick="${i}">${E(q)}</button>`).join('');
+ renderDiet();renderMenu();renderCart();
+}
+function renderDiet(){
+ $('#dietBar').classList.toggle('hidden',S.excludes.length===0);
+ $('#dietText').textContent=t('diet')+': '+S.excludes.map(a=>t('allergens')[a]||a).join(', ');
+}
+function renderMenu(){
+ const visible=S.menu.filter(d=>{
+  if(S.cat!=='all'&&(S.cat==='beverage'?!['beverage','dessert'].includes(d.category):d.category!==S.cat))return false;
+  if(S.filters.has('hit')&&!d.tags.includes('hit'))return false;
+  for(const a of ['gluten','pork'])if(S.filters.has(a)&&(d.allergens.includes(a)||!d.allergens_verified))return false;
   return true;
+ });
+ $('#dishCount').textContent=`${visible.length} ${t('count')}`;$('#empty').classList.toggle('hidden',visible.length>0);$('#empty').textContent=t('empty');
+ $('#menuGrid').innerHTML=visible.map((d,i)=>`<article class="dish" data-dish="${E(d.id)}" style="animation-delay:${Math.min(i,8)*35}ms">
+ <div class="photo">${I('leaf',28)}${d.image?`<img src="${E(d.image)}" alt="${E(d.name)}" loading="lazy" referrerpolicy="no-referrer"><span class="photo-label">${E(t('photo'))}</span>`:''}</div>
+ <div class="dish-body"><div class="dish-top"><h2>${E(d.name)}</h2><span class="weight">${E(d.weight)}</span></div><p class="description">${E(d.desc?.[S.lang]||d.desc?.pl||d.desc?.en||d.desc?.ru||'')}</p><div class="badges">${d.tags.includes('hit')?`<span class="badge hit">${I('star',10)} ${E(t('filters')[0])}</span>`:''}${d.allergens.map(a=>`<span class="badge">${E(t('allergens')[a]||a)}</span>`).join('')}${!d.allergens_verified?`<span class="badge warn">${E(t('unknown'))}</span>`:''}</div>
+ <div class="dish-bottom"><span class="price">${new Intl.NumberFormat(S.lang).format(d.price)} <small>PLN</small></span><button class="add" data-add="${E(d.id)}" aria-label="${E(t('add')+': '+d.name)}" ${!d.available?'disabled':''}>${I(d.available?'plus':'ban',18)}</button></div>${!d.available?`<span class="small subtle">${E(t('stopped'))}</span>`:''}</div></article>`).join('');
+ $('#menuGrid').querySelectorAll('img').forEach(img=>img.addEventListener('error',()=>{img.nextElementSibling?.remove();img.remove();},{once:true}));
 }
-function renderMenu(highlight){
-  const grid = $("#menuGrid"); grid.innerHTML = "";
-  const vis = S.menu.filter(dishOk);
-  $("#emptyState").classList.toggle("hidden", vis.length!==0);
-  vis.forEach((d,i)=>{
-    const el = document.createElement("article");
-    el.className = "dish-card rounded-[18px] overflow-hidden rise-in"; el.style.animationDelay = `${i*0.05}s`; el.dataset.id = d.id;
-    const alg = d.allergens.map(a=>`<span class="text-[10px] font-medium text-coral bg-coral/10 rounded px-1.5 py-0.5">${t("alg")[a]||a}</span>`).join("");
-    el.innerHTML = `
-      ${d.image?`<img class="dish-img" src="${d.image}" alt="${esc(d.name)}" loading="lazy" onerror="this.remove()">`:""}
-      <div class="p-3.5">
-        <div class="flex items-start justify-between gap-2">
-          <h3 class="wordmark text-[15px] leading-tight">${d.name}</h3>
-          <div class="shrink-0 wordmark text-[16px]">${d.price}<span class="text-[10px] text-onyx/40 ml-0.5">zł</span></div>
-        </div>
-        <div class="mt-1 flex items-center gap-1.5 flex-wrap">
-          <span class="text-[10px] font-medium text-onyx/45 bg-onyx/5 rounded px-1.5 py-0.5">${t("cat")[d.category]||d.category}</span>
-          ${d.tags.includes("hit")?'<span class="text-[10px] font-bold text-onyx bg-lime rounded px-1.5 py-0.5">HIT</span>':""}
-          ${alg}
-          <span class="ml-auto text-[10px] text-onyx/35">${d.weight}</span>
-        </div>
-        <p class="mt-2 text-[12px] leading-snug text-onyx/60">${d.desc[S.lang]||d.desc.en}</p>
-        <div class="mt-3 flex justify-end">
-          <button data-add="${d.id}" class="add-btn bg-onyx text-cream text-[12px] font-semibold rounded-full px-4 py-2 spring-fast active:scale-95">+ ${t("add")}</button>
-        </div>
-      </div>`;
-    grid.appendChild(el);
-  });
-  grid.querySelectorAll("[data-add]").forEach(b=>b.addEventListener("click",()=>{
-    addToCart(b.dataset.add);
-    const o = b.textContent; b.textContent = "✓ "+t("added"); b.classList.replace("bg-onyx","bg-emer");
-    setTimeout(()=>{ b.textContent = o; b.classList.replace("bg-emer","bg-onyx"); },1000);
-  }));
-  if(highlight){
-    const el = grid.querySelector(`[data-id="${highlight}"]`);
-    if(el){ el.classList.add("dish-highlight"); el.scrollIntoView({behavior:"smooth",block:"center"});
-      setTimeout(()=>el.classList.remove("dish-highlight"),3400); }
-  }
+function openChat(open=true){S.opened=open;$('#sheet').classList.toggle('open',open);$('#sheet').setAttribute('aria-hidden',String(!open));$('#sheet').inert=!open;$('#toggleChat').setAttribute('aria-expanded',String(open));$('#toggleChat').style.transform=open?'rotate(180deg)':'';if(open)$('#messages').scrollTop=$('#messages').scrollHeight;}
+function addLine(ids,combo=false){
+ const same=S.lines.find(l=>l.combo===combo&&l.ids.join('|')===ids.join('|'));
+ if(same&&same.qty>=30){K.toast('Максимум 30 порций в строке',true);return;}
+ if(same)same.qty++;else if(S.lines.length<40)S.lines.push({ids,qty:1,combo});else{K.toast('Максимум 40 строк в чеке',true);return;}
+ saveCart();renderCart();requestQuote();K.toast(t('add'));
 }
+function renderCart(){
+ const count=S.lines.reduce((s,l)=>s+l.qty*l.ids.length,0);
+ $('#cartOpen').classList.toggle('hidden',count===0);$('#cartCount').textContent=count;$('#checkout').disabled=!count||!S.quote;
+ $('#cartTotal').textContent=S.quote?money(S.quote.total):'— PLN';$('#dialogTotal').textContent=S.quote?money(S.quote.total):'—';
+ $('#cartSaving').classList.toggle('hidden',!S.quote?.saving);$('#cartSaving').textContent=S.quote?.saving?`−${money(S.quote.saving)}`:'';
+ $('#cartItems').innerHTML=S.lines.length?S.lines.map((l,i)=>{const server=S.quote?.lines[i];const names=server?.names||l.ids.map(id=>S.menu.find(d=>d.id===id)?.name||id);return `<div class="cart-line"><div class="cart-line-head"><div>${l.combo?`<span class="badge hit">${E(t('combo'))}</span><br>`:''}${names.map(E).join('<br>')}</div><span>${server?E(money(server.total)):'—'}</span></div><div class="qty-row"><button class="icon-btn" data-qty="${i}" data-delta="-1" aria-label="Уменьшить">${I('minus',13)}</button><span class="mono">${l.qty}</span><button class="icon-btn" data-qty="${i}" data-delta="1" aria-label="Увеличить" ${l.qty>=30?'disabled':''}>${I('plus',13)}</button><button class="text-btn small" data-remove="${i}">${E(t('remove'))}</button></div></div>`;}).join(''):`<p class="empty">${E(t('emptyCart'))}</p>`;
+}
+function requestQuote(){
+ clearTimeout(quoteTimer);quoteController?.abort();S.quote=null;$('#cartStatus').textContent=S.lines.length?t('checking'):'';$('#cartStatus').className='inline-status';renderCart();
+ if(!S.lines.length)return;
+ const signature=JSON.stringify({lines:S.lines,excludes:S.excludes});
+ quoteTimer=setTimeout(async()=>{quoteController=new AbortController();try{const result=await K.api('/api/order/quote',{method:'POST',body:JSON.parse(signature),signal:quoteController.signal});if(signature!==JSON.stringify({lines:S.lines,excludes:S.excludes}))return;S.quote=result;$('#cartStatus').textContent='';renderCart();}catch(e){if(e.name==='AbortError')return;$('#cartStatus').textContent=e.message;$('#cartStatus').className='inline-status error';$('#cartTotal').textContent='—';$('#checkout').disabled=true;}},120);
+}
+function message(role,text){const el=document.createElement('div');el.className='message '+(role==='user'?'user':'');const p=document.createElement('p');p.textContent=text;el.append(p);$('#messages').append(el);$('#messages').scrollTop=$('#messages').scrollHeight;return el;}
+function replyCards(el,result){
+ const list=document.createElement('div');list.className='chat-picks';
+ list.innerHTML=(result.dishes||[]).map(id=>S.menu.find(d=>d.id===id)).filter(Boolean).map(d=>`<div class="chat-pick"><button class="text-btn" data-focus="${E(d.id)}">${E(d.name)}</button><span>${E(money(d.price))}</span><button class="icon-btn" data-add="${E(d.id)}" aria-label="${E(t('add'))}">${I('plus',13)}</button></div>`).join('');el.append(list);
+ if(result.combo){const c=result.combo;const box=document.createElement('div');box.className='combo';box.innerHTML=`<div class="combo-head">${E(t('combo'))}<span>−${c.discount}%</span></div><ul>${c.ids.map(id=>S.menu.find(d=>d.id===id)).filter(Boolean).map(d=>`<li>${E(d.name)}</li>`).join('')}</ul><div class="combo-total"><span>${E(money(c.total))}</span><del>${E(money(c.subtotal))}</del></div><button class="primary lime" data-combo="${E(c.ids.join('|'))}">${I('plus')}${E(t('set'))}</button>`;el.append(box);}
+ $('#messages').scrollTop=$('#messages').scrollHeight;
+}
+async function send(text){
+ if(S.busy||!text.trim())return;text=text.trim().slice(0,2000);$('#messageInput').value='';openChat();S.busy=true;$('#send').disabled=true;const generation=langGeneration;
+ message('user',text);const typing=message('assistant',t('thinking'));typing.classList.add('typing');
+ try{
+  const r=await K.api('/api/chat',{method:'POST',body:{message:text,context:{lang:S.lang},history:S.history.slice(-16),excludes:S.excludes}});
+  typing.remove();if(generation!==langGeneration)return;
+  S.history.push({role:'user',content:text},{role:'assistant',content:r.reply});S.history=S.history.slice(-16);
+  S.excludes=r.excludes||S.excludes;saveCart();renderDiet();requestQuote();const el=message('assistant',r.reply);replyCards(el,r);$('#engineLabel').textContent=r.engine==='gemini'?t('gemini'):t('rules');
+ }catch(e){typing.remove();if(generation===langGeneration){const box=message('assistant',e.message||t('error'));const retry=document.createElement('button');retry.className='text-btn';retry.style.color='var(--lime)';retry.textContent=t('retry');retry.onclick=()=>send(text);box.append(retry);}}
+ finally{S.busy=false;$('#send').disabled=false;}
+}
+async function loadMenu(){
+ $('#loadStatus').hidden=false;$('#loadStatus').textContent='…';
+ try{const data=await K.api('/api/menu');S.menu=data.dishes;S.venue=data.venue;$('#venue').textContent=data.venue;$('#loadStatus').hidden=true;applyLanguage();requestQuote();}
+ catch(e){$('#loadStatus').innerHTML=`${E(t('load'))} <button class="text-btn" id="reloadMenu">${E(t('retry'))}</button>`;$('#reloadMenu').onclick=loadMenu;}
+}
+function greet(){
+ $('#messages').innerHTML='';const text=t('greet').replace('Gęsi Puch',S.venue)+(lastWeather?.temp!==null&&lastWeather?.temp<12?t('cool'):'');message('assistant',text);
+}
+function voice(){
+ const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+ if(!Recognition){K.toast(t('voice'));return;}
+ const rec=new Recognition();rec.lang={ru:'ru-RU',en:'en-GB',pl:'pl-PL'}[S.lang];let ended=false;$('#mic').disabled=true;$('#mic').classList.add('live');
+ const reset=()=>{if(ended)return;ended=true;$('#mic').disabled=false;$('#mic').classList.remove('live');};rec.onresult=e=>{reset();send(e.results[0][0].transcript);};rec.onerror=()=>{reset();K.toast(t('voice'),true);};rec.onend=reset;try{rec.start();}catch{reset();K.toast(t('voice'),true);}
+}
+function uniqueKey(){return globalThis.crypto?.randomUUID?.()||Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);}
 
-/* ---------- cart ---------- */
-function addToCart(id){ S.cart.set(id,(S.cart.get(id)||0)+1); updateCart(); }
-function cartLines(){ return [...S.cart.entries()].map(([id,qty])=>({d:S.menu.find(x=>x.id===id),qty})).filter(l=>l.d); }
-function updateCart(){
-  const n=[...S.cart.values()].reduce((a,b)=>a+b,0), bar=$("#cartBar");
-  if(!n){ bar.classList.add("hide"); return; }
-  bar.classList.remove("hide");
-  let total = cartLines().reduce((s,l)=>s+l.d.price*l.qty,0);
-  if(S.comboApplied){ total -= Math.round(total*0.15); $("#cartSaving").classList.remove("hidden"); }
-  else $("#cartSaving").classList.add("hidden");
-  $("#cartCount").textContent = n; $("#cartTotal").textContent = total+" zł";
-}
-function openOrder(){
-  const items=$("#modalItems"); items.innerHTML="";
-  cartLines().forEach(({d,qty})=>{ items.innerHTML += `
-    <div class="flex items-start justify-between gap-3 text-[14px]">
-      <div class="min-w-0"><div class="text-cream leading-tight">${d.name}</div>
-      <div class="text-white/40 text-[11px]">${qty} × ${d.price} zł · ${d.weight}</div></div>
-      <div class="shrink-0 wordmark">${d.price*qty} zł</div></div>`; });
-  const sub=cartLines().reduce((s,l)=>s+l.d.price*l.qty,0); let total=sub;
-  const disc=$("#modalDiscount");
-  if(S.comboApplied){ const sv=Math.round(sub*0.15); total-=sv; disc.classList.remove("hidden");
-    disc.innerHTML=`<span>${t("combo_title")}</span><span>−${sv} zł</span>`; } else disc.classList.add("hidden");
-  $("#modalTotal").textContent=total+" zł";
-  $("#modalTime").textContent=new Date().toLocaleString(S.lang==="pl"?"pl-PL":S.lang==="en"?"en-GB":"ru-RU",{dateStyle:"medium",timeStyle:"short"});
-  $("#orderCode").textContent="GP-"+Math.floor(1000+Math.random()*9000);
-  $("#modalWrap").classList.remove("hide");
-}
-
-/* ---------- sheet ---------- */
-function setSheet(mode){
-  const s=$("#aiSheet"); s.classList.remove("expanded","collapsed"); s.classList.add(mode); S.sheet=mode;
-  $("#chatBody").classList.toggle("hidden", mode==="collapsed");
-  $("#sheetChevron").style.transform = mode==="expanded"?"rotate(180deg)":"rotate(0deg)";
-}
-(function drag(){
-  let y0=0, top0=0, on=false;
-  document.addEventListener("DOMContentLoaded",()=>{
-    const g=$("#sheetGrab"), s=$("#aiSheet");
-    const start=y=>{ on=true; y0=y; top0=s.getBoundingClientRect().top; s.classList.add("dragging"); };
-    const move=y=>{ if(!on) return; const dy=Math.max(0,y-y0);
-      s.style.transform = innerWidth>=768 ? `translate(-50%,${dy}px)` : `translateY(${dy}px)`; };
-    const end=y=>{ if(!on) return; on=false; s.classList.remove("dragging"); s.style.transform="";
-      setSheet((y-y0)>80 ? "collapsed" : "expanded"); };
-    g.addEventListener("touchstart",e=>start(e.touches[0].clientY),{passive:true});
-    g.addEventListener("touchmove",e=>move(e.touches[0].clientY),{passive:true});
-    g.addEventListener("touchend",e=>end(e.changedTouches[0].clientY));
-    g.addEventListener("mousedown",e=>{ start(e.clientY);
-      const mm=ev=>move(ev.clientY), mu=ev=>{ end(ev.clientY);
-        document.removeEventListener("mousemove",mm); document.removeEventListener("mouseup",mu); };
-      document.addEventListener("mousemove",mm); document.addEventListener("mouseup",mu); });
-  });
-})();
-
-/* ---------- chat ---------- */
-function bubble(role, html){
-  const body=$("#chatBody"), w=document.createElement("div");
-  w.className=`flex pop-in ${role==="user"?"justify-end":"justify-start"}`;
-  const b=document.createElement("div");
-  b.className = role==="user"
-    ? "msg-user bg-lime text-onyx px-4 py-2.5 text-[14px] max-w-[82%] font-medium"
-    : "msg-ai bg-white/[.08] border border-white/10 px-4 py-3 text-[14px] leading-snug max-w-[88%]";
-  b.innerHTML=html; w.appendChild(b); body.appendChild(w); body.scrollTop=body.scrollHeight; return w;
-}
-function typing(on){
-  let el=$("#typingW");
-  if(on){ if(el) return; const w=bubble("ai",'<div class="flex gap-1 items-center h-4"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div>'); w.id="typingW"; }
-  else if(el) el.remove();
-}
-function dishCardMini(d){
-  const alg=d.allergens.map(a=>`<span class="text-[10px] text-coral/90 bg-coral/15 rounded px-1 py-0.5">${t("alg")[a]||a}</span>`).join(" ");
-  return `<div class="mt-2 rounded-xl bg-white/[.06] border border-white/10 p-3 flex gap-3 items-center">
-    ${d.image?`<img src="${d.image}" class="w-14 h-14 rounded-lg object-cover shrink-0" loading="lazy" onerror="this.remove()">`:""}
-    <div class="min-w-0 flex-1">
-      <div class="wordmark text-[13px] text-cream leading-tight">${d.name}</div>
-      <div class="text-[10px] text-white/40">${d.weight} · ${t("cat")[d.category]||d.category}</div>
-      <div class="flex gap-1 mt-1 flex-wrap">${alg}</div>
-    </div>
-    <div class="shrink-0 text-right">
-      <div class="wordmark text-lime text-[14px]">${d.price} zł</div>
-      <button class="add-inline mt-1 text-[11px] font-bold bg-lime text-onyx rounded-full px-3 py-1" data-id="${d.id}">+ ${t("add")}</button>
-    </div></div>`;
-}
-function comboCard(ids,discount){
-  const ds=ids.map(id=>S.menu.find(d=>d.id===id)).filter(Boolean); if(ds.length<2) return "";
-  const sum=ds.reduce((s,d)=>s+d.price,0), sv=Math.round(sum*discount/100), fin=sum-sv;
-  const list=ds.map(d=>`<li class="flex justify-between text-[12px] text-cream/85"><span class="truncate pr-2">${d.name}</span><span class="text-white/45 shrink-0">${d.price} zł</span></li>`).join("");
-  return `<div class="combo-glow mt-2 rounded-xl p-[1.5px]"><div class="relative bg-onyx2 rounded-xl p-3.5">
-    <div class="flex items-center justify-between">
-      <div><div class="text-[10px] font-bold tracking-[.18em] uppercase text-lime">${t("combo_title")}</div>
-      <div class="text-white/45 text-[10px]">${t("combo_sub")}</div></div>
-      <div class="text-right"><div class="text-white/35 text-[10px] line-through">${sum} zł</div>
-      <div class="wordmark text-lime text-lg">${fin} zł</div></div></div>
-    <ul class="mt-2.5 space-y-1">${list}</ul>
-    <div class="mt-2 text-[11px] text-lime2 font-semibold">${t("saves")}: −${sv} zł</div>
-    <button class="combo-apply mt-2.5 w-full bg-lime text-onyx font-bold rounded-full py-2 text-[12px] spring-fast active:scale-95" data-ids="${ids.join(",")}">${t("combo_add")}</button>
-  </div></div>`;
-}
-function bindChatButtons(scope){
-  scope.querySelectorAll(".add-inline").forEach(b=>b.addEventListener("click",()=>{
-    addToCart(b.dataset.id); b.textContent="✓ "+t("added"); b.classList.replace("bg-lime","bg-emer"); b.classList.add("text-cream"); }));
-  scope.querySelectorAll(".combo-apply").forEach(b=>b.addEventListener("click",()=>{
-    b.dataset.ids.split(",").forEach(id=>S.cart.set(id,(S.cart.get(id)||0)+1));
-    S.comboApplied=true; updateCart();
-    b.textContent="✓ "+t("added"); b.classList.replace("bg-lime","bg-emer"); b.classList.add("text-cream"); }));
-}
-
-async function sendChat(){
-  const inp=$("#chatInput"), text=inp.value.trim(); if(!text) return;
-  inp.value=""; bubble("user", md(text)); typing(true); setSheet("expanded");
-  S.history.push({role:"user", content:text});
-  try{
-    const res = await api("/api/chat",{ method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ message:text, context:{lang:S.lang}, history:S.history.slice(-8) }) });
-    typing(false);
-    let html = md(res.reply||"");
-    (res.dishes||[]).forEach(id=>{ const d=S.menu.find(x=>x.id===id); if(d) html+=dishCardMini(d); });
-    if(res.combo?.ids?.length>=2) html+=comboCard(res.combo.ids, res.combo.discount||15);
-    const w=bubble("ai",html); bindChatButtons(w);
-    S.history.push({role:"assistant", content:res.reply||""});
-  }catch(e){ typing(false); bubble("ai", t("offline")); }
-}
-
-/* ---------- voice ---------- */
-function initVoice(){
-  const btn=$("#micBtn"), SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){ btn.style.display="none"; return; }
-  const rec=new SR(); rec.continuous=false; rec.interimResults=false; let on=false;
-  const code=()=>({ru:"ru-RU",en:"en-US",pl:"pl-PL"})[S.lang];
-  btn.addEventListener("click",()=>{ rec.lang=code();
-    if(on){ rec.stop(); return; }
-    try{ rec.start(); on=true; btn.classList.add("mic-live"); }catch(e){} });
-  rec.onresult=e=>{ $("#chatInput").value=e.results[0][0].transcript; sendChat(); };
-  rec.onend=()=>{ on=false; btn.classList.remove("mic-live"); };
-}
-
-/* ---------- i18n apply ---------- */
-function applyLang(){
-  document.documentElement.lang=S.lang;
-  $$("[data-i18n]").forEach(el=>{ const v=I18N[S.lang][el.dataset.i18n]; if(typeof v==="string") el.textContent=v; });
-  $$("[data-i18n-ph]").forEach(el=>{ const v=I18N[S.lang][el.dataset.i18nPh]; if(v) el.placeholder=v; });
-  $$(".lang-btn").forEach(b=>{ const on=b.dataset.lang===S.lang;
-    b.classList.toggle("bg-lime",on); b.classList.toggle("text-onyx",on); b.classList.toggle("text-white/50",!on); });
-  // tabs & chips
-  const tabs=$("#catTabs"); tabs.innerHTML="";
-  [["all","tab_all"],["soup","tab_soup"],["main","tab_main"],["beverage","tab_bev"]].forEach(([c,k])=>{
-    const b=document.createElement("button");
-    b.className=`tab shrink-0 px-4 py-2 rounded-full text-[12px] font-semibold border border-onyx/10 bg-white ${S.cat===c?"on":""}`;
-    b.textContent=t(k); b.addEventListener("click",()=>{ S.cat=c; applyLang(); }); tabs.appendChild(b); });
-  const chips=$("#filterChips"); chips.innerHTML="";
-  [["hit","chip_hit",ICON.hit],["gf","chip_gf",ICON.gf],["np","chip_np",ICON.np]].forEach(([f,k,ic])=>{
-    const b=document.createElement("button");
-    b.className=`chip shrink-0 flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[12px] font-semibold border border-onyx/15 bg-white ${S.filters.has(f)?"on":""}`;
-    b.innerHTML=`${ic}<span>${t(k)}</span>`;
-    b.addEventListener("click",()=>{ S.filters.has(f)?S.filters.delete(f):S.filters.add(f); applyLang(); });
-    chips.appendChild(b); });
-  renderMenu(); updateCart();
-}
-
-/* ---------- boot ---------- */
-document.addEventListener("DOMContentLoaded", async ()=>{
-  applyLang();
-  $("#sheetToggle").addEventListener("click",()=>setSheet(S.sheet==="expanded"?"collapsed":"expanded"));
-  $("#sendBtn").addEventListener("click",sendChat);
-  $("#chatInput").addEventListener("keydown",e=>{ if(e.key==="Enter") sendChat(); });
-  $("#cartOpen").addEventListener("click",openOrder);
-  $("#modalClose").addEventListener("click",()=>$("#modalWrap").classList.add("hide"));
-  $("#modalWrap").addEventListener("click",e=>{ if(e.target.id==="modalWrap") e.target.classList.add("hide"); });
-  initVoice();
-  try{
-    const [menu, weather] = await Promise.all([ api("/api/menu"), api("/api/weather") ]);
-    S.menu = menu.dishes; S.weather = weather;
-    $("#weatherBadge").classList.remove("hidden");
-    $("#weatherIcon").innerHTML = wIcon(weather.condition);
-    $("#weatherText").textContent = `${weather.city} ${weather.temp}°C`;
-    applyLang();
-    setTimeout(()=>{ setSheet("expanded"); bubble("ai", md(t("greet")(weather))); }, 900);
-  }catch(e){
-    console.error("API offline:", e);
-    $("#emptyState").classList.remove("hidden");
-  }
+restoreCart();applyLanguage();openChat(false);
+new ResizeObserver(entries=>document.documentElement.style.setProperty('--dock-h',entries[0].target.getBoundingClientRect().height+'px')).observe($('#dock'));
+// Keep controls above the software keyboard, including Safari visualViewport resizing.
+function keyboard(){const v=window.visualViewport;const offset=v?Math.max(0,innerHeight-v.height-v.offsetTop):0;document.documentElement.style.setProperty('--keyboard',offset+'px');}
+window.visualViewport?.addEventListener('resize',keyboard);window.visualViewport?.addEventListener('scroll',keyboard);
+$('#toggleChat').onclick=()=>openChat(!S.opened);$('#closeChat').onclick=()=>openChat(false);$('#grab').onclick=()=>openChat(false);
+let startY=0;$('#grab').addEventListener('pointerdown',e=>{startY=e.clientY;$('#grab').setPointerCapture(e.pointerId);});$('#grab').addEventListener('pointerup',e=>{if(e.clientY-startY>35)openChat(false);});
+$('#messageInput').addEventListener('focus',()=>openChat());$('#composer').onsubmit=e=>{e.preventDefault();send($('#messageInput').value);};$('#mic').onclick=voice;
+$('#cartOpen').onclick=()=>{$('#cartDialog').showModal();requestQuote();};
+document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$('#'+b.dataset.close).close());
+$('#clearCart').onclick=()=>{S.lines=[];saveCart();requestQuote();};$('#clearDiet').onclick=()=>{S.excludes=[];S.history=[];saveCart();renderDiet();requestQuote();greet();};
+document.addEventListener('click',e=>{
+ const add=e.target.closest('[data-add]');if(add){addLine([add.dataset.add]);return;}
+ const combo=e.target.closest('[data-combo]');if(combo){addLine(combo.dataset.combo.split('|'),true);combo.disabled=true;combo.innerHTML=I('check')+' '+E(t('add'));return;}
+ const cat=e.target.closest('[data-cat]');if(cat){S.cat=cat.dataset.cat;applyLanguage();return;}
+ const filter=e.target.closest('[data-filter]');if(filter){const f=filter.dataset.filter;S.filters.has(f)?S.filters.delete(f):S.filters.add(f);applyLanguage();return;}
+ const focus=e.target.closest('[data-focus]');if(focus){openChat(false);S.cat='all';S.filters.clear();applyLanguage();const card=[...document.querySelectorAll('[data-dish]')].find(x=>x.dataset.dish===focus.dataset.focus);if(card){card.classList.add('highlight');card.scrollIntoView({behavior:'smooth',block:'center'});}return;}
+ const quick=e.target.closest('[data-quick]');if(quick){send(t('quick')[Number(quick.dataset.quick)]);return;}
+ const lang=e.target.closest('[data-lang]');if(lang){if(S.busy){K.toast(t('thinking'));return;}langGeneration++;S.lang=lang.dataset.lang;K.save('konomi-lang',S.lang);S.history=[];applyLanguage();greet();return;}
+ const qty=e.target.closest('[data-qty]');if(qty){const i=Number(qty.dataset.qty);S.lines[i].qty+=Number(qty.dataset.delta);S.lines=S.lines.filter(l=>l.qty>0);saveCart();requestQuote();return;}
+ const remove=e.target.closest('[data-remove]');if(remove){S.lines.splice(Number(remove.dataset.remove),1);saveCart();requestQuote();}
 });
+$('#checkout').onclick=async()=>{
+ if(!S.quote)return;$('#checkout').disabled=true;S.idempotency ||= uniqueKey();
+ try{const r=await K.api('/api/orders',{method:'POST',body:{lines:S.lines,excludes:S.excludes,idempotency_key:S.idempotency}});$('#receipt').innerHTML=`<p class="small subtle">${E(S.venue)} · ${E(new Date(r.created_at).toLocaleString(S.lang))}</p>${r.lines.map(l=>`<div class="cart-line-head"><span>${l.qty} × ${l.names.map(E).join(' + ')}</span><span>${E(money(l.total))}</span></div>`).join('')}<div class="total-row"><span>${E(t('total'))}</span><span>${E(money(r.total))}</span></div>${r.saving?`<p class="small subtle">${E(t('saving'))}: ${E(money(r.saving))}</p>`:''}<div class="checkout-code"><span class="small">${E(t('show'))}</span><strong>${E(r.code)}</strong></div><p class="small subtle">${E(t('notice'))}</p>`;$('#cartDialog').close();$('#receiptDialog').showModal();}catch(e){K.toast(e.message,true);}finally{$('#checkout').disabled=!S.quote;}
+};
+(async()=>{await loadMenu();try{lastWeather=await K.api('/api/weather');$('#weather').innerHTML=I(lastWeather.condition==='clear'?'sun':['rain','drizzle'].includes(lastWeather.condition)?'rain':'cloud')+E(lastWeather.temp===null?lastWeather.city:`${lastWeather.city} ${lastWeather.temp}°C`);if(lastWeather.stale)$('#weather').title='Weather data unavailable or stale';}catch{$('#weather').textContent='Łódź';}greet();})();
