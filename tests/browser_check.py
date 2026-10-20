@@ -22,7 +22,8 @@ with sync_playwright() as p:
     checked('Menu loads from API')
     page.locator('[data-add="s1"]').click()
     page.wait_for_function("document.querySelector('#cartTotal').textContent.includes('31')")
-    page.locator('#toggleChat').click();page.wait_for_timeout(600)
+    if 'open' not in page.locator('#sheet').get_attribute('class'):page.locator('#toggleChat').click()
+    page.wait_for_timeout(600)
     # Sheet rectangle ends before dock; cart center hit-tests to the cart button.
     bounds=page.evaluate('''() => {const s=document.querySelector('#sheet').getBoundingClientRect();const d=document.querySelector('#dock').getBoundingClientRect();const c=document.querySelector('#cartOpen').getBoundingClientRect();const hit=document.elementFromPoint(c.x+c.width/2,c.y+c.height/2);return {sheetBottom:s.bottom,dockTop:d.top,clickable:!!hit.closest('#cartOpen')};}''')
     assert bounds['sheetBottom']<=bounds['dockTop']+1,bounds
@@ -36,7 +37,7 @@ with sync_playwright() as p:
     page.locator('#messageInput').fill('Собери комбо');page.locator('#composer').evaluate('(f)=>f.requestSubmit()')
     page.locator('[data-combo]').wait_for(timeout=15000)
     page.locator('[data-combo]').click()
-    page.wait_for_function("document.querySelector('#cartTotal').textContent.includes('136')")
+    page.wait_for_function("S.quote?.lines?.some(l=>l.combo) && S.quote.lines.some(l=>!l.combo) && document.querySelector('#cartCount').textContent==='4'")
     checked('Combo added, server total includes full-price individual dish')
     page.locator('#closeChat').click();page.screenshot(path=str(OUT/'guest-desktop.png'),full_page=False)
     page.goto(BASE+'/admin');page.locator('#loginView').wait_for(state='visible')
@@ -63,7 +64,8 @@ with sync_playwright() as p:
     page.set_viewport_size({'width':390,'height':844});page.goto(BASE,wait_until='domcontentloaded');page.locator('.dish').first.wait_for();page.wait_for_timeout(600)
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), 'Guest horizontal overflow'
     logo=page.locator('.brand').bounding_box();assert logo['width']>100 and logo['x']>=0
-    page.locator('#toggleChat').click();page.wait_for_timeout(600)
+    if 'open' not in page.locator('#sheet').get_attribute('class'):page.locator('#toggleChat').click()
+    page.wait_for_timeout(600)
     bounds=page.evaluate('''() => {const s=document.querySelector('#sheet').getBoundingClientRect(),d=document.querySelector('#dock').getBoundingClientRect(),c=document.querySelector('#cartOpen').getBoundingClientRect();return {bottom:s.bottom,top:d.top,click:!!document.elementFromPoint(c.x+c.width/2,c.y+c.height/2).closest('#cartOpen')};}''')
     assert bounds['bottom']<=bounds['top']+1 and bounds['click'],bounds
     page.locator('#cartOpen').click();assert page.locator('#cartDialog').is_visible();page.locator('[data-close=cartDialog]').click()

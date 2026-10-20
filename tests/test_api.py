@@ -150,11 +150,11 @@ def test_import_file_limits_and_types(client):
     assert preview(client,b'x'*5_000_001).status_code==413
     assert preview(client,b'{broken','menu.json').status_code==422
 
-def test_ai_validation_filters_unknown_ids(client,monkeypatch):
+def test_ai_cannot_override_deterministic_selection(client,monkeypatch):
     async def fake(request,prompt):return {'reply':'Try these dishes','dishes':['not-real','s1'],'combo':{'ids':['s1','m1','m2']}}
     monkeypatch.setattr(main,'generate',fake);monkeypatch.setattr(store,'api_key',lambda:'test')
     r=client.post('/api/chat',json={'message':'Hi'}).json()
-    assert r['dishes']==['s1'] and r['combo'] is None and r['engine']=='gemini'
+    assert r['dishes']==['s1','s2','s3'] and 'not-real' not in r['dishes'] and r['combo'] is None and r['engine']=='gemini'
 
 def test_weather_does_not_invent_temperature(client,monkeypatch):
     main.WEATHER.update(ts=0,data=None)

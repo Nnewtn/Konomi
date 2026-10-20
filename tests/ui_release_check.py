@@ -23,7 +23,7 @@ with sync_playwright() as p:
     page.locator('#loginForm [name=password]').fill('Browser-test-password-123')
     page.locator('#loginForm button[type=submit]').click();page.locator('#workspace').wait_for(state='visible')
     page.locator('[data-tab=settings]').click()
-    page.wait_for_function("document.querySelector('#deployDiagnostics').textContent.includes('3.1.0-railway')")
+    page.wait_for_function("document.querySelector('#deployDiagnostics').textContent.includes('4.0.0-dining')")
     assert page.locator('#settingModel').input_value()=='auto'
     assert page.locator('#loadModels').is_visible()
     # A fake API response validates picker behavior, without a paid provider request.

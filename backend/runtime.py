@@ -23,6 +23,8 @@ def validate_assets():
     missing=[name for name in REQUIRED_ASSETS if not (front/name).is_file()]
     if missing:
         raise RuntimeError('Release is incomplete: frontend assets missing: '+', '.join(missing)+'. Commit every frontend file and rebuild. Never mount a volume over application code.')
+    if not (ROOT/'backend/assets/DejaVuSans.ttf').is_file():
+        raise RuntimeError('Print font is missing. Include backend/assets/DejaVuSans.ttf in the release.')
     return front
 
 def validate_data_location():
