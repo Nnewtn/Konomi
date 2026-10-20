@@ -24,9 +24,16 @@ def detect(text,previous=None,names=()):
     text=clean(text,names)
     low=text.casefold().strip(' .!?…')
     if not re.search(r'[^\W\d_]',text,re.UNICODE):return previous or 'en'
-    if low in AMBIGUOUS and previous:return previous
+    if low in {'ok','okay','ja','si','sí','oui'} and previous:return previous
     if low in SHORT:return SHORT[low]
     if len(low)<3 and previous:return previous
+    if re.search(r'\b(свинини|порадьте|бажаю|хочу їсти|смачного|будь ласка|страву|страви|рибу|риба|напої|лактози)\b',low):return 'uk'
+    if re.search('[а-яё]',text,re.I) and not re.search('[іїєґІЇЄҐ]',text):return 'ru'
+    if re.search(r'\b(i want|i would|what is|what does|please recommend|please explain|can you|could you|would you)\b',low):return 'en'
+    if re.search(r'\b(soup|soups|broth|dessert|drink|fish)\b',low) and not re.search(r'\b(ich|bitte|chcę|poproszę)\b',low):return 'en'
+    if re.search(r'\b(suppe|suppen|fisch|getränk|nachtisch)\b',low):return 'de'
+    if re.search(r'\b(ich|ihnen|dazu|empfehle|bitte)\b',low):return 'de'
+    if re.search(r'\b(zupa|zupy|rosół|żurek|chce|prosze|zurek)\b',low):return 'pl'
     latin=len(re.findall('[A-Za-z]',text))
     native=len(re.findall(r'[^\x00-\x7f\W\d_]',text))
     if latin>native and re.search(r"\b(what (is|does|would)|i would|i am|i have|please (explain|recommend)|would you|i want)\b",low):return 'en'
@@ -60,3 +67,8 @@ def matches(text,expected,names=()):
     actual=detect(stripped)
     # One clear mismatch is a repair/fallback, never a silently wrong-language answer.
     return actual==expected or (expected in ('zh','ja') and actual==expected)
+
+
+def detect_message_language(guest_message, previous=None, names=(), ui_lang=None):
+    """ui_lang exists for compatibility; it is deliberately never read."""
+    return detect(guest_message,previous,names)

@@ -35,22 +35,25 @@ import dining
 import sommelier
 import qr_cards
 import languages
+import operations
 
 log = logging.getLogger('konomi')
 FRONT = frontend_dir()
-RELEASE = '4.0.0-dining'
+RELEASE = '5.0.0-service'
 
 @asynccontextmanager
 async def lifespan(app):
     validate_assets()
     store.init()
     guest_state.init()
+    operations.init()
+    operations.bootstrap_secret()
     await asyncio.to_thread(languages.classify, 'Welcome to the restaurant. Please help me choose a meal.')
     app.state.http = httpx.AsyncClient(timeout=httpx.Timeout(22, connect=5))
     yield
     await app.state.http.aclose()
 
-app = FastAPI(title='Konomi AI', version='4.0.0', lifespan=lifespan)
+app = FastAPI(title='Konomi AI', version='5.0.0', lifespan=lifespan)
 origins=[o.strip() for o in os.getenv('ALLOWED_ORIGINS','http://localhost:8000,http://127.0.0.1:8000').split(',') if o.strip() and o.strip()!='*']
 for candidate in [os.getenv('PUBLIC_BASE_URL',''), 'https://'+os.getenv('RAILWAY_PUBLIC_DOMAIN','') if os.getenv('RAILWAY_PUBLIC_DOMAIN') else '']:
     parsed=urlsplit(candidate)
@@ -156,7 +159,9 @@ def get_settings(user=Depends(admin)):
 def set_settings(body:Settings,user=Depends(admin)):
     values=body.model_dump(exclude={'gemini_key','clear_key'})
     if body.clear_key: values['gemini_key']=''
-    elif body.gemini_key and body.gemini_key.strip(): values['gemini_key']=store.cipher().encrypt(body.gemini_key.strip().encode()).decode()
+    elif body.gemini_key and body.gemini_key.strip():
+        try:values['gemini_key']=store.cipher().encrypt(body.gemini_key.strip().encode()).decode()
+        except (OSError,ValueError):raise HTTPException(503,'Восстановите encryption.key из резервной копии. Пока используйте GEMINI_API_KEY в переменных сервиса.')
     with store.db() as c:
         for k,v in values.items(): c.execute('INSERT OR REPLACE INTO settings VALUES (?,?)',(k,store.encode(v)))
     ai_provider.clear_cache()
@@ -174,7 +179,7 @@ async def ai_models(request:Request,refresh:bool=False,user=Depends(admin)):
 
 @app.get('/api/admin/diagnostics')
 def diagnostics(user=Depends(admin)):
-    return {'release':RELEASE,'frontend_complete':all((FRONT/name).is_file() for name in ('index.html','admin.html','admin.js','shared.js','app.js','style.css')),'storage':'railway-volume' if os.getenv('RAILWAY_VOLUME_MOUNT_PATH') else 'configured-directory' if os.getenv('KONOMI_DATA_DIR') else 'local','persistent_volume_detected':bool(os.getenv('RAILWAY_VOLUME_MOUNT_PATH')),'key_configured':bool(store.api_key()),'model':store.settings()['model'],'ai':ai_provider.STATE}
+    return {'release':RELEASE,'frontend_complete':all((FRONT/name).is_file() for name in ('index.html','admin.html','admin.js','shared.js','app.js','style.css')),'storage':'railway-volume' if os.getenv('RAILWAY_VOLUME_MOUNT_PATH') else 'configured-directory' if os.getenv('KONOMI_DATA_DIR') else 'local','persistent_volume_detected':bool(os.getenv('RAILWAY_VOLUME_MOUNT_PATH')),'key_configured':bool(store.api_key()),'model':store.settings()['model'],'ai':ai_provider.STATE,'key_recovery':store.KEY_STATE}
 
 @app.post('/api/admin/ai/test')
 async def ai_test(request:Request,user=Depends(admin)):
@@ -422,7 +427,7 @@ def eligible(ex):return dining.eligible(ex)
 
 async def dialogue_generate(request,prompt):
     try:
-        async with asyncio.timeout(12):return await generate(request,prompt)
+        async with asyncio.timeout(30):return await generate(request,prompt)
     except TimeoutError:raise HTTPException(503,'AI_TIMEOUT')
 
 def quote_cart(lines,excludes,diets=()):
@@ -432,7 +437,9 @@ def quote_cart(lines,excludes,diets=()):
 async def chat(body:Chat,request:Request):
     limit('chat:'+ip(request),30)
     if body.event=='cart_added' and (not body.trigger_id or not body.cart):raise HTTPException(422,'Cart trigger requires an item and cart')
-    return await sommelier.answer(body,request,dialogue_generate,weather,quote_cart,quote_combo)
+    result=await sommelier.answer(body,request,dialogue_generate,weather,quote_cart,quote_combo)
+    operations.note_chat(request,body,result)
+    return result
 
 class OfferDecision(BaseModel):
     session_id:str=Field(min_length=20,max_length=100)
@@ -508,21 +515,7 @@ class SendOrder(Order):
 @app.post('/api/orders')
 def create_order(body:SendOrder,request:Request):
     limit('orders:'+ip(request),20)
-    # QR context survives through the dialogue and check; no POS dispatch is claimed.
-    if body.session_id:
-        state=guest_state.load(body.session_id)
-        if not state:raise HTTPException(409,'GUEST_SESSION_EXPIRED')
-        if state['table']!=body.table:raise HTTPException(409,'TABLE_CONTEXT_MISMATCH')
-        body.excludes=sorted(set(body.excludes)|set(state['excludes']))
-        body.diets=sorted(set(body.diets)|set(state['diets']))
-    with store.db() as c:
-        c.execute('BEGIN IMMEDIATE')
-        prev=c.execute('SELECT payload FROM orders WHERE id=?',(body.idempotency_key,)).fetchone()
-        if prev:return json.loads(prev['payload'])
-        quote=order_quote(body)
-        result={**quote,'code':'GP-'+secrets.token_hex(3).upper(),'status':'guest_check','created_at':now_iso(),'table':body.table}
-        c.execute('INSERT INTO orders VALUES (?,?,?)',(body.idempotency_key,time.time(),store.encode(result)))
-    return result
+    return operations.submit(body,request,order_quote,now_iso)
 
 @app.get('/api/health')
 @app.get('/healthz',include_in_schema=False)
@@ -539,4 +532,6 @@ def ready():
 @app.get('/admin/',include_in_schema=False)
 @app.get('/admin.html',include_in_schema=False)
 def admin_page(): return FileResponse(FRONT/'admin.html')
+operations.register(app,admin,write_guard,limit,ip)
+
 app.mount('/',StaticFiles(directory=str(FRONT),html=True),name='frontend')

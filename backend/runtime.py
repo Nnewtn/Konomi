@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parent.parent
-REQUIRED_ASSETS=('index.html','admin.html','app.js','admin.js','shared.js','style.css','import-template.csv')
+REQUIRED_ASSETS=('index.html','admin.html','app.js','admin.js','shared.js','style.css','import-template.csv', 'service-admin.js', 'service-guest.js')
 
 def railway():
     return bool(os.getenv('RAILWAY_PROJECT_ID') or os.getenv('RAILWAY_SERVICE_ID') or os.getenv('RAILWAY_ENVIRONMENT_ID'))

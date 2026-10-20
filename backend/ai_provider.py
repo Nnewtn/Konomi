@@ -2,6 +2,7 @@
 404, key rejection, quota and outages are distinct; secrets are never echoed.
 """
 import json
+import asyncio
 import re
 import time
 from fastapi import HTTPException
@@ -89,22 +90,68 @@ async def resolve_model(request):
         raise ProviderError('Сохраненная модель недоступна для этого ключа. Загрузите список моделей и выберите доступную либо режим «Авто».',404,'model_not_available')
     return selected
 
+FALLBACK_MODELS=['gemini-2.5-flash','gemini-2.0-flash','gemini-2.5-flash-lite','gemini-1.5-flash-latest']
+
+def parse_response(raw_text):
+    """Decode a JSON envelope; text recovery is allowed ONLY by a dialogue consumer."""
+    text=re.sub(r'^\s*```(?:json)?\s*|\s*```\s*$','',raw_text.strip(),flags=re.I)
+    match=re.search(r'\{.*\}',text,re.DOTALL)
+    if match:
+        try:
+            value=json.loads(match.group())
+            if isinstance(value,dict):return value
+        except (ValueError,TypeError):
+            # A trailing explanation can contain another brace: try each object boundary.
+            decoder=json.JSONDecoder()
+            for offset,c in enumerate(text):
+                if c=='{':
+                    try:
+                        value,_=decoder.raw_decode(text[offset:])
+                        if isinstance(value,dict):return value
+                    except ValueError:pass
+    if len(text)>=8 and not text.startswith(('{','[','<','```')) and re.search(r'[^\W\d_]',text):
+        import dining
+        prefs=dining.parse(text)
+        safe=dining.select(dining.eligible(),prefs,{})
+        hits=[d['id'] for d in safe if d['name'].casefold() in text.casefold()]
+        return {'reply':text[:2000],'dishes':hits or [d['id'] for d in safe[:3]],'_plain_text':True}
+    raise ValueError('No complete JSON or natural text')
+
 async def generate(request,prompt):
-    key=require_key();model=await resolve_model(request)
-    try:
-        r=await request.app.state.http.post(BASE+f'/models/{model}:generateContent',headers={'x-goog-api-key':key},json={'contents':[{'parts':[{'text':prompt}]}],'generationConfig':{'responseMimeType':'application/json','temperature':0.2,'maxOutputTokens':8192}},timeout=35)
-        if r.status_code!=200:
-            if r.status_code==404:clear_cache()
-            raise provider_error(r)
-        data=r.json()
-        candidates=data.get('candidates') or []
-        if not candidates:raise ProviderError('Gemini не вернул ответ: возможно, запрос заблокирован правилами провайдера.',None,'empty_response')
-        candidate=candidates[0]
-        if candidate.get('finishReason') not in ('STOP',None):raise ProviderError('Ответ Gemini не завершен или заблокирован. Уменьшите импортируемый документ либо измените запрос.',None,'incomplete_response')
-        text=''.join(p.get('text','') for p in candidate.get('content',{}).get('parts',[]) if not p.get('thought'))
-        parsed=json.loads(text.strip().removeprefix('```json').removesuffix('```').strip())
-        if not isinstance(parsed,dict):raise ValueError()
-        STATE.update(engine='gemini',last_error=None,last_success=time.time(),resolved_model=model)
-        return parsed
-    except httpx.HTTPError:raise ProviderError('Запрос Gemini не завершился: сетевой сбой или таймаут. Повторите позже.',None,'network')
-    except (ValueError,TypeError,AttributeError):raise ProviderError('Gemini вернул неверный JSON. Попробуйте другую доступную модель или меньший документ.',None,'invalid_response')
+    key=require_key();configured=store.settings().get('model','auto')
+    chain=[]
+    if configured!='auto':chain.append(configured.removeprefix('models/'))
+    else:
+        try:
+            # Model discovery is an optimization, NEVER a prerequisite for generation.
+            async with asyncio.timeout(3):chain.append(await resolve_model(request))
+        except (HTTPException,TimeoutError,httpx.HTTPError):pass
+    chain=list(dict.fromkeys(chain+FALLBACK_MODELS))
+    attempts=[];deadline=time.monotonic()+24;last=None
+    for model in chain:
+        if not re.fullmatch(r'[A-Za-z0-9._-]{3,100}',model):continue
+        remaining=deadline-time.monotonic()
+        if remaining<=0:break
+        try:
+            async with asyncio.timeout(min(7,remaining)):
+                r=await request.app.state.http.post(BASE+f'/models/{model}:generateContent',headers={'x-goog-api-key':key},json={'contents':[{'parts':[{'text':prompt}]}],'generationConfig':{'responseMimeType':'application/json','temperature':0.35,'maxOutputTokens':8192}},timeout=min(7,remaining))
+            attempts.append({'model':model,'status':r.status_code})
+            if r.status_code!=200:
+                last=provider_error(r)
+                if last.kind in ('authorization','leaked_key') or r.status_code not in (400,404,429,500,502,503,504):raise last
+                continue
+            data=r.json();candidates=data.get('candidates') or []
+            if not candidates:raise ValueError('empty candidates')
+            candidate=candidates[0]
+            if candidate.get('finishReason') not in ('STOP',None):raise ValueError('incomplete or blocked')
+            text=''.join(p.get('text','') for p in candidate.get('content',{}).get('parts',[]) if not p.get('thought'))
+            parsed=parse_response(text)
+            STATE.update(engine='gemini',last_error=None,last_success=time.time(),resolved_model=model,attempts=attempts)
+            return parsed
+        except ProviderError:raise
+        except (httpx.HTTPError,TimeoutError):
+            attempts.append({'model':model,'status':'timeout_or_network'});last=ProviderError('Временная ошибка сети Gemini.',None,'network')
+        except (ValueError,TypeError,AttributeError):
+            last=ProviderError('Gemini вернул неполный, заблокированный или нечитаемый ответ.',None,'invalid_response')
+    STATE.update(engine='rules',attempts=attempts)
+    raise last or ProviderError('Все доступные модели Gemini временно недоступны.',503,'unavailable')

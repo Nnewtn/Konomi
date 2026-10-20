@@ -1,7 +1,7 @@
 'use strict';
 const $=s=>document.querySelector(s),{esc:E,icon:I}=K;
 const A={user:null,menu:[],editing:null,preview:null,tab:'overview',dirty:false,importAI:false};
-const titles={overview:'Обзор',menu:'Меню ресторана',import:'Импорт меню',settings:'ИИ и настройки',qr:'QR-коды столиков'};
+const titles={overview:'Обзор',menu:'Меню ресторана',import:'Импорт меню',settings:'ИИ и настройки',qr:'QR-коды столиков',service:'Зал и кухня',analytics:'Продажи и аналитика'};
 const cats={soup:'Супы',main:'Горячее',beverage:'Напитки',dessert:'Десерты',starter:'Закуски',other:'Другое'};
 const sources={seed:'Базовое меню',manual:'Вручную',import:'Импорт',ai_import:'ИИ-импорт'};
 const fieldLabels={id:'ID / артикул',name:'Название',category:'Категория',price:'Цена (PLN)',weight:'Вес / объем',allergens:'Аллергены',desc:'Описание',image:'URL фото',ingredients:'Состав',details:'Дополнительные детали'};
@@ -11,6 +11,7 @@ async function call(path,opts){try{return await K.api(path,opts);}catch(e){if(e.
 async function busy(button,fn){button.disabled=true;try{return await fn();}catch(e){K.toast(e.message,true);return null;}finally{button.disabled=false;}}
 async function enter(user){A.user=user;$('#adminUser').textContent=user.username;$('#loginView').classList.add('hidden');$('#workspace').classList.remove('hidden');$('#loginForm').reset();await navigate(A.tab);}
 async function navigate(tab){
+ if(window.serviceNavigate)window.serviceNavigate(tab);
  A.tab=tab;$('#pageTitle').textContent=titles[tab];document.querySelectorAll('[data-section]').forEach(s=>s.classList.toggle('hidden',s.dataset.section!==tab));document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
  try{if(tab==='overview')await overview();else if(tab==='menu')await loadMenu();else if(tab==='settings')await settings();else if(tab==='qr'&&!$('#qrBase').value)$('#qrBase').value=location.origin;}catch(e){K.toast(e.message,true);}
 }

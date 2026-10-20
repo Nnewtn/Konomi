@@ -1,219 +1,171 @@
-# Konomi AI 4.0 — профессиональный диалог, явные допродажи и печатные QR
+# Konomi AI v5 — инструкция перед презентацией
 
-FastAPI + SQLite + Vanilla JS, HTML и собственный CSS без CDN-зависимостей интерфейса. Гостевой интерфейс RU/EN/PL; админ-панель на русском. Рекомендуется Python 3.12. Это рабочий клиент-серверный пилот, не кассовая система.
+## Обновление действующего ресторана
 
-## Что изменилось по вашему руководству v2
+**Не удаляйте рабочий Volume и не заменяйте БД файлами из архива.** Сначала сохраните согласованную резервную копию `konomi.db` вместе с `encryption.key`. Разворачивайте весь проект: добавлены серверный модуль операций и два клиентских скрипта.
 
-Это обновление приложенного konomi-railway-fixed.zip. Не заменяйте только четыре файла: добавлены независимые модули языков, правил безопасности, серверных диалогов и печатных QR, а также зависимости и лицензированный шрифт. Разворачивайте архив **целиком**, сохранив рабочий Volume/БД и encryption.key. Существующая база не перезаписывается; две служебные таблицы диалогов/повторов создаются автоматически.
+В Railway: файлы архива — в корень репозитория; Volume `/data`; один сервис/одна реплика. `APP_ENV=production`, `COOKIE_SECURE=true`, `ADMIN_PASSWORD` минимум 12 символов при первой инициализации. `PORT` должен совпадать с Target Port. Старые пользовательские Start Command с `$PORT` очистите. Проверка готовности: `/api/ready`, версия: `/api/health` → `5.0.0-service`.
 
-### Язык ответа не равен языку интерфейса
+## Перед показом владельцу
 
-PL/EN/RU переводит только UI. API не использует context.lang для ответа. Язык определяется из текущего сообщения гостя локальным langid (97 языков) с обработкой коротких фраз и оригинальных названий блюд. Неоднозначные «ok», «ja» и название блюда без предложения опираются на предыдущий язык; на одном слове невозможно математически гарантировать определение языка. Смена языка UI не стирает диалог и не отменяет текущий ответ. Гость может написать по-немецки в русском интерфейсе, затем перейти на английский в той же сессии.
+1. В `/admin` → «ИИ и настройки» сохраните ключ и выполните проверку соединения. `GEMINI_API_KEY` / `GOOGLE_API_KEY` — резерв при пустом/нерасшифровываемом сохранённом ключе.
+2. В меню подтвердите реальные рецептуры и аллергены. Обновление намеренно не объявляет все блюда проверенными и не публикует черновики автоматически.
+3. Откройте «Табло заказов», установите PIN зала, включите звук. Стандартного PIN `1111` нет. Сотрудникам безопаснее подтверждать со своего авторизованного устройства; владелец телефона гостя технически может подсмотреть введённый PIN.
+4. На телефоне откройте `/?table=5`, напишите «Здравствуйте хочу суп»: язык ответа должен быть русским, карточки — только супы, независимо от языка шапки.
+5. Сформируйте чек: он появится на табло в течение очередного двухсекундного опроса, но ещё не войдёт в подтверждённые продажи.
+6. Подтвердите PIN на телефоне гостя либо кнопкой «Принять на кухню». Затем «Готово к подаче» → «Выдано / оплачено». Оплата здесь — отметка сотрудника, а не подтверждение эквайринга.
+7. В «Продажи и аналитика» проверьте сумму, фильтры столика/периода/статуса и экспорт CSV. Отменённые заказы и неподтверждённые чеки не учитываются как продажи.
+8. Выполните настоящие EN/DE/PL/RU диалоги со своим Gemini-ключом и один заказ на реальном Railway-домене. Эти внешние проверки нельзя заменить локальными автотестами.
 
-Промпт Gemini требует ответ на обнаруженном языке. Ответ проверяется локальным детектором; при явном несовпадении делается одна корректирующая попытка. Если провайдер недоступен, существует честный локальный движок с реальными данными меню и готовыми ответами на RU/EN/PL/DE/FR/ES/IT/PT/UK/NL — это не имитация внешнего ИИ. Для других языков нужен работающий Gemini: при отсутствии подтвержденного языкового ответа возвращается контролируемая ошибка, а не ответ на языке шапки. Поэтому нельзя обещать офлайн-сомелье на всех 97 языках. Web Speech API использует язык текущего диалога/браузера, а не переключателя; точность и поддержка голосового ввода зависят от браузера и разрешений.
+**Пределы обещаний:** внешняя сеть/Gemini не имеют гарантии доступности 100%; резервный локальный движок обозначается честно. Открытия меню не доказывают физические QR-сканирования. Разница среднего чека с ИИ/без ИИ не доказывает причинный прирост выручки. Состояние `confirmed` не означает подтверждённую оплату.
 
-### Мобильный UX и открытие шторки
+Автотесты меняют данные: запускайте браузерные сценарии только на отдельной пустой БД, никогда на сервере ресторана. Измеренные результаты — `verification.json`; исходники тестов включены.
 
-Все текстовые поля, поиск, пароль, URL, number, textarea и select имеют `font-size:16px!important`. Масштабирование пользователем не запрещено. Через 500 мс после инициализации DOM шторка плавно открывается, не дожидаясь погоды, **без focus()** и без вызова экранной клавиатуры. Если пользователь успел явно свернуть шторку или открыл диалог, таймер не перебивает его действие. Корзина по-прежнему в отдельной измеряемой нижней зоне; открытые модальные чеки — в верхнем слое браузера. Initial welcome — подсказка интерфейса, а не выдуманный ответ Gemini.
+---
 
-### Профессиональная работа сомелье
+## Technical reference
 
-Основные файлы: backend/main.py — маршруты/валидация/чеки; backend/sommelier.py — ограниченный контекстный диалог; backend/dining.py — SQL-фильтр, ранжирование, комбо и пары; backend/languages.py — язык; backend/guest_state.py — состояние и защита повторов. Генеративный слой формулирует объяснение, но не определяет цену, скидку, наличие блюда и действие в корзине.
+# Konomi AI 5.0 — Sommelier · Staff approval · Kitchen · Analytics
 
-Детерминированные ограничения применяются **до** передачи меню модели: публикация, стоп-лист, подтверждение рецептуры, пересечение аллергенов, подтвержденные диеты. Ограничения и бюджет хранятся на сервере, а не только в последних сообщениях браузера. Модель не может снять их по инструкции в тексте. Нераспознанная заявленная аллергия блокирует рекомендации и финальный чек до уточнения/явного сброса. Это не медицинская система: свободный язык и правильность технологических карт нельзя гарантировать; перекрестный контакт всегда уточняет персонал.
+FastAPI + SQLite/WAL + Vanilla JS. One origin, one worker, one replica, persistent Volume.
+This release upgrades the supplied v4 project. No working secrets or restaurant database are bundled.
 
-Промпт запрещает уход от ресторанной темы, выдачу системных инструкций, выдуманные сроки готовности, цену в прозе, фиктивную популярность, лечебные обещания и заявление «отправлено на кухню». Модель получает только безопасное подмножество меню и последние сообщения. API ограничивает размер, время вызова и количество попыток. Ответ — короткий, вежливый, без эмодзи и давления. Проверка свободного генеративного текста не является формальным доказательством истинности каждой фразы; перед публичным запуском нужна человеческая проверка с вашим ключом.
+## Before updating a working restaurant
 
-### Явные допродажи вместо рекламных блоков
+1. Back up the **database and encryption.key together** (`python backend/manage.py backup`).
+2. Preserve the existing Volume and its data path. Deploy the complete archive, not individual files.
+3. Do not replace the working database with menu.json. The JSON is only a first-start seed.
+4. First startup creates service/analytics tables and migrates legacy guest checks to `created`, never to sales.
+5. Keep a backup of the previous application version. Back up the post-migration database separately before downgrading.
+6. Verify `/api/ready`, `/admin`, a test order, PIN/staff approval, the kitchen board, and a live Gemini conversation.
 
-После добавления основного блюда клиент отправляет событие `cart_added`. Сервер выбирает **одно** органичное дополнение, а сомелье предлагает его сообщением с двумя действиями: принять / оставить без дополнений. Заказ не меняется от самого предложения. Принятие повторно проверяет всё меню, стоп-лист, ограничения, бюджет всей корзины и наличие основного блюда. Если блюдо удалили или закончилось — ничего не добавляется. Двойной клик/повтор запроса не добавляют две порции. После отказа допродажи прекращаются в этой сессии; дополнительно есть cooldown 90 секунд и максимум три предложения.
+## Railway
 
-Для вашего меню к сытной Golonka предлагается реальный домашний морс. Бургер/фри/соус не выдумываются: если ресторан добавит эти позиции, проставит теги `burger`, `side`/`fries`/`sauce` или явно задаст `pairing_ids`, механизм предложит реальное дополнение из базы. Индивидуальное дополнение не получает придуманную скидку. Скидка 10–15% — только на валидный сет.
+Put Dockerfile, railway.json, backend/ and frontend/ in the repository root. Railway Root Directory is that root, not backend/.
+Use the Dockerfile builder and the supplied railway.json. Clear old custom start/build commands.
+The application code is in `/opt/konomi`; Dockerfile has no VOLUME instruction. Start is handled by `backend/container_entry.py`, which sets data permissions, drops root and starts `serve.py`.
 
-В редакторе появились необязательные себестоимость, приоритет кухни, JSON вкусового профиля (0–1), подтвержденные diets и явные pairing_ids. Без этих данных ядро использует доступные категории/теги и погоду, не придумывая маржу и вкусовой вектор. Ранжирование нормализует используемые веса; комбо ищется по комбинациям до 30 лучших блюд каждой группы, с проверкой бюджета и суммарной массы еды до 1700 г. Это ограниченный поиск для MVP, не обещание глобального оптимума любого ресторана.
+Attach a Railway Volume at `/data`. Do not mount over application code. The app uses RAILWAY_VOLUME_MOUNT_PATH automatically. Keep an existing KONOMI_DATA_DIR only when it correctly names a directory inside your attached Volume.
 
-### QR-карточки и контекст столика
+Variables:
 
-В /admin → «QR-коды столиков» укажите публичный origin меню, первый номер и количество (1–200, обычно 1–30). Нажмите предпросмотр и скачайте PDF A4 или ZIP с PDF, отдельными SVG/PNG и tables.json. QR генерируются библиотекой qrcode, а не нейросетью и не внешним сервисом. PDF содержит **6 карточек на A4**, линии реза, номера столов, контрастные коды с quiet zone. Шрифт DejaVuSans с лицензией включен в backend/assets; сборка проверяет его наличие. Печатать в масштабе 100%.
+| Name | Meaning |
+|---|---|
+| ADMIN_USERNAME | `admin`, first database initialization only |
+| ADMIN_PASSWORD | Unique password, at least 12 characters; required for first production initialization |
+| APP_ENV | `production` |
+| COOKIE_SECURE | `true` under HTTPS; `false` only for isolated local HTTP tests |
+| PORT | e.g. `8000`; networking Target Port must match it |
+| PUBLIC_BASE_URL | Public HTTPS origin for a custom domain |
+| GEMINI_API_KEY | Optional environment recovery key |
+| GOOGLE_API_KEY | Alternative environment recovery key |
+| GEMINI_MODEL | `auto`, unless a specific accessible model is desired |
+| HALL_PIN | Optional **first initialization** of staff PIN, 4–8 digits; no default PIN |
 
-Ссылка имеет вид https://restaurant.example/?table=7. Номер виден гостю, передается в диалог, финальный чек и административный список чеков. Корзины и диалоги разных столиков не смешиваются в браузере. Это маршрутизация, **не защита от подмены номера столика**: URL может открыть кто угодно; для доверенного вызова официанта нужны подписанные физические метки/интеграция.
+Railway public domain is added to allowed origins automatically. For custom origins use PUBLIC_BASE_URL or ALLOWED_ORIGINS. One replica only: SQLite, dialogue locks and part of rate limiting are not a distributed service. For multiple replicas use PostgreSQL and shared coordination.
 
-Перед тиражом проверьте реальную ссылку и один бумажный экземпляр телефоном. localhost нельзя печатать как публичный адрес ресторана. В авто-тестах декодируются все 30 PNG-кодов и все 30 QR из растеризованных страниц итогового PDF, а не только проверяется наличие файла.
+`GET /api/health` returns release `5.0.0-service`. `GET /api/ready` checks database and mandatory assets without calling Gemini or weather. `/admin`, `/admin/`, `/admin.html` all remain available.
 
-### Сверка с полным руководством
+## Local start
 
-- Контекст: Open-Meteo и Europe/Warsaw реализованы; без данных температура не выдумывается.
-- Интент и жесткий фильтр: локальные правила + JSON-экстракция Gemini; SQL json_each фильтрует реальные записи перед LLM.
-- Ранжирование/пары: используются подтвержденные данные, контекст, теги, введенный flavor/cost/kitchen_priority. Неизвестные компоненты не получают фиктивных значений.
-- Комбо: серверные цены в грошах, реальные скидки, бюджет и масса; пример руководства с морсом 18 PLN не перезаписывает цену базы 16 PLN.
-- Генеративный слой: язык гостя, культурные объяснения, ограниченный контекст, безопасное поведение при ошибках.
-
-PostgreSQL, химические эмбеддинги, обученная коллаборативная фильтрация по закрытым оплаченных чекам, прогноз реальной маржи без себестоимости и рекламные обещания ROI **не изображаются как готовые**. В этой версии SQLite; чеки гостя не являются подтверждением оплаты или основанием для CF. Это честное разделение работающего MVP и концепции из руководства.
-
-Диалоги и replay-кеш живут до 24 часов после последней активности и очищаются при следующей активности; сервер может содержать сведения о диетических ограничениях. Перед production настройте собственную политику приватности/ретеншна и юридические основания хранения. Токены гостевой сессии не включаются в URL. Ключи ИИ не попадают в гостевой интерфейс.
-
-### Проверка этой версии
-
-110 API/deployment/диалоговых/QR-тестов; 10 прежних браузерных сценариев; 5 новых end-to-end сценариев v4 (язык, мобильный ввод, отказ/принятие, номера столов, скачивание PDF). Отдельно проверены реальный запуск с произвольным PORT и перезапуск с сохранением БД, ключа и пароля. Проверка QR выполнена машинным декодером на PNG и на отрисованных страницах PDF.
-
-```bash
-pip install -r requirements-dev.txt
-pytest -q tests/test_api.py tests/test_deploy.py tests/test_dining_v4.py
-python tests/boot_check.py
-# Браузерные проверки — ТОЛЬКО на отдельной тестовой БД и тестовом сервере:
-# tests/browser_check.py, tests/ui_release_check.py, tests/ui_v4_check.py
-```
-
-Gemini в этой среде проверялся с контролируемыми тестовыми ответами и ошибками, **не с вашим живым ключом**. Сам Railway-деплой и физические iOS-устройства здесь не проверялись. Перед показом владельцу: подключите ключ, выберите доступную модель, подтвердите рецептуры, выполните несколько настоящих DE/EN/PL/RU диалогов и отсканируйте карточку. Нельзя честно заявить «идеальный ИИ без единой возможной ошибки» на основании модульных тестов.
-
-## Быстрый старт
-
-- Windows: запустите `start.bat` (нужен установленный Python).
-- macOS/Linux: `sh start.sh`.
-- Меню: http://127.0.0.1:8000
-- Администрирование: http://127.0.0.1:8000/admin
-
-При первом запуске создается пользователь `admin`, а случайный пароль выводится **один раз в терминале сервера**. Сохраните его и измените в админ-панели. Альтернатива: заранее скопируйте `backend/.env.example` в `backend/.env` и задайте `ADMIN_PASSWORD` длиной от 12 символов. После создания пользователя изменение ADMIN_PASSWORD в .env не меняет его пароль. В production/Railway пароль при первой инициализации нужно задать явно: случайные пароли в облачные логи не выводятся.
-
-Ручной запуск:
+Python 3.12 recommended:
 
 ```bash
-python -m venv .venv
-# Linux/macOS: source .venv/bin/activate
-# Windows: .venv\Scripts\activate
 pip install -r backend/requirements.txt
 python backend/serve.py
 ```
 
-Сайт нельзя запустить двойным кликом по HTML: нужен FastAPI-сервер. Меню и админ-панель обслуживаются с одного origin. PORT читается в Python из переменной окружения (по умолчанию 8000). HOST по умолчанию 0.0.0.0; start.sh/start.bat ограничивают локальный запуск 127.0.0.1.
+Or `sh start.sh` / `start.bat`. Guest menu: http://127.0.0.1:8000; admin: /admin.
+For local use copy backend/.env.example to backend/.env. Do not commit it. ADMIN_PASSWORD changes do not reset an existing admin; use the panel or manage.py reset-password.
 
-## Админ-панель
+## Gemini recovery and truthful engine state
 
-**Обзор:** количество черновиков, стоп-лист, позиции с непроверенным составом, последние чеки гостей, журнал изменений.
+API key precedence: decrypted store → GEMINI_API_KEY → GOOGLE_API_KEY. Empty or unreadable ciphertext does not stop environment-key recovery. Ciphertext and provider error bodies are never returned to guests or written to diagnostics.
 
-**Меню:** поиск, категории, описание RU/EN/PL, состав, аллергены, вес, цена, фото, детали приготовления, теги, публикация, стоп-лист. Версия каждой записи защищает от перезаписи изменений из другой вкладки. В карточке есть происхождение и исходная строка импорта. В seed-меню сохранены позиции из загруженного пользователем Konomi-main.zip; исходные поля доступны в source.raw. Изображения иллюстративные, два заведомо неверных фото из прежней версии не показываются.
+If encryption.key disappeared beside an existing database and an environment key exists, startup is allowed **without generating a replacement encryption key**. Restore the original file before saving encrypted keys in the panel. Without a recovery key startup stops explicitly rather than silently corrupting stored credentials. Do not rotate encryption.key by deleting it.
 
-**ИИ и настройки:** вставьте ключ Gemini и сохраните. Нажмите «Загрузить доступные модели»: список берется из Google models.list для вашего ключа, с пагинацией и фильтрацией generateContent. Выберите модель или оставьте `auto`, снова сохраните и нажмите «Проверить соединение». В auto выбирается доступная текстовая Flash с предпочтением стабильной версии; имя модели не угадывается и не фиксируется в коде. Пустое поле ключа сохраняет прежний ключ; отдельная галочка удаляет его. Ключ шифруется Fernet на сервере и не возвращается в API; видны только последние четыре символа. Ключ шифрования лежит в приватном каталоге данных, поэтому это защита от отдельной утечки БД, а не от полного доступа к серверу. Переменная GEMINI_API_KEY — необязательный резерв до первого сохранения/удаления ключа в панели.
+Clearing a stored key does not disable an environment fallback. Remove both environment key variables to fully disable external AI.
 
-Вызовы ИИ используют ваш аккаунт провайдера. Без ключа и при ошибках API работает ограниченный локальный помощник. Внешний Gemini без действительного ключа не тестировался; обработка ответов тестировалась с заглушками. Используется асинхронный REST через httpx, ключ передается только заголовком x-goog-api-key. Не используются ни google-generativeai, ни google-genai. Ошибки авторизации, утечки ключа, отсутствия модели, квоты и сети различаются в админ-панели. HTTP 404 сам по себе не доказывает компрометацию или устаревший SDK; префикс ключа также не является достаточной диагностикой. Чат при ошибке переходит на локальный движок, а администратор видит причину в «Состоянии развертывания».
+A failing models.list is not a prerequisite for generation. Attempt chain, without duplicates:
+configured model → gemini-2.5-flash → gemini-2.0-flash → gemini-2.5-flash-lite → gemini-1.5-flash-latest.
+In auto mode an accessible discovered model is preferred when discovery succeeds. This is the requested compatibility chain, **not a claim that Google still offers every model to every project**. Refresh available models in the panel when needed.
 
-## Импорт меню
+400/404/429/5xx and transport failures can advance to another model. Authorization/compromised-key errors stop immediately. A call has a bounded time budget; endless retries cannot hang the API. Diagnostics retain safe model/status attempts, not secrets.
 
-1. Загрузите CSV, XLSX, JSON, PDF или DOCX, до 5 МБ.
-2. Для таблиц проверьте сопоставление колонок: название, категория, цена, вес, аллергены, состав, описание, фото, детали, ID. Неизвестные колонки сохраняются в `source.raw`.
-3. PDF и DOCX сначала читаются как текст. После отдельного подтверждения текст отправляется настроенному Gemini для извлечения структуры. Это расходует квоту провайдера. Сканам без текстового слоя нужен отдельный OCR; он не входит в эту версию. ИИ может ошибиться или пропустить фрагмент — исходный документ нужно сверять.
-4. Проверьте ошибки и предупреждения. Цена должна быть в PLN; пропущенная/неверная цена блокирует импорт. Никаких тихих пересчетов валют. Лимит — 1000 строк; у Excel читается первый лист.
-5. Выберите: пропустить дубликаты или обновить по ID/названию. Обновление возвращает существующее блюдо в черновик. Сохранение транзакционное, токен предпросмотра одноразовый и живет час.
-6. Все импортированные позиции — черновики с неподтвержденными аллергенами. Проверьте их в редакторе и только затем публикуйте.
+Markdown/code fences and surrounding explanations are removed from JSON responses. Genuine unwrapped natural-language dialogue responses retain `engine=gemini`. Prices, menu IDs, restrictions, cart changes and staff approval remain server-owned. Typed import/intent consumers do not treat arbitrary prose as a successful extraction.
 
-Есть скачиваемый шаблон CSV и JSON-экспорт меню. Экспорт — данные меню, не полная резервная копия базы/ключей. При обратном импорте публикация и подтверждение безопасности намеренно сбрасываются.
+If all models or the account/network are unavailable, the engine is honestly reported as local. No software can guarantee external API availability or truthfulness of every generated sentence. The UI must not disguise local text as a successful Gemini response.
 
-## Аллергены и ограничения
+## Language and deterministic selection
 
-Отсутствие отметки не означает отсутствие аллергена. У начальных 10 блюд состав не подтвержден рестораном: диетический фильтр и чат с исключениями не рекомендуют их как проверенные, пока администратор не подтвердит данные. Свинина — диетическое ограничение, не аллерген; для совместимости хранится в том же списке. Молочная аллергия и непереносимость лактозы — разные ограничения. Вручную указывайте, например, `milk`, `egg`, `fish`, `nuts` по реальной рецептуре.
+PL/EN/RU changes only UI. `detect_message_language` reads guest text, never UI context. Distinctive scripts, conversational grammar, short phrases and langid are combined. Original dish names alone and ambiguous short acknowledgements may retain the preceding dialogue language. Language detection on ambiguous text is not mathematically perfect.
 
-Распознавание ограничений из свободного текста не медицинский классификатор. Распознанные исключения видны гостю и сохраняются в диалоге до явного сброса. Модель не может добавить карточку неизвестного/запрещенного блюда; текстовый ответ генеративен и не является гарантией безопасности. Состав и риск перекрестного контакта подтверждает ресторан.
+RU/PL/EN/DE/UK synonyms cover soups, duck/goose/poultry, meat/pork, potato dumplings, fish, light meals, desserts, drinks, warming/cold preferences and budgets. Topic selection is a **hard filter before ranking**. Soup cards are always category=soup, never drinks/desserts. An optional accompanying drink can be mentioned in prose but is not silently added to the soup cards/cart.
 
-## Корзина и чеки
+“90 PLN for two” is a total shared budget, not 90 each. The result includes an explicit attainable `budget_plan`; recommended cards are alternatives, not a claim that all alternatives fit together. Combo search divides a shared group budget before constructing an individual set.
 
-- Чат расположен над измеряемой нижней панелью; корзина имеет свою строку и не прячется за чатом. Системные dialog-окна открываются в верхнем слое браузера с управлением фокусом.
-- Учитываются safe-area и visualViewport для клавиатуры, есть режим reduced-motion.
-- Количество меняется, позиции удаляются, корзина восстанавливается после перезагрузки.
-- Цены, доступность, состав комбо и скидка повторно проверяются **сервером**. Деньги считаются в целых грошах. Скидка 10–15% действует только на набор, не на всю корзину.
-- Подтверждение формирует сохраняемый чек с постоянным кодом. Повторная отправка с тем же idempotency key не дублирует чек.
-- Чек нужно показать официанту. Отправки в POS, оплаты и автоматического заказа на кухню нет.
+Unavailable sushi/pizza/etc. redirects to actual safe menu options. Prompt-injection phrases never grant discounts, admin access or cart mutations. The host uses authored dish descriptions; it does not invent apple garnish for a duck whose recipe says plum sauce. Optional selling respects diet, budget and an explicit refusal. Not every safety/decline/error message carries a sales pitch.
 
-Погода — Open-Meteo, Лодзь; время — Europe/Warsaw. При недоступности API показывается город без выдуманной температуры. Голос — Web Speech API, если доступен браузеру; на реальном устройстве обычно нужен HTTPS/localhost.
+Local mode supports authored replies in RU/EN/PL/DE/UK and the existing FR/ES/IT/PT/NL templates. Unknown ingredients, unspecified cooking times, payments or unsupported questions are not guaranteed to be answerable offline. Staff must resolve ambiguity; the system never promises an unrestricted offline general-purpose AI.
 
-## Хранение, резервные копии и восстановление
+## Allergens, drafts and publication — deliberate safety boundary
 
-SQLite хранится в `backend/data/konomi.db` (можно изменить KONOMI_DATA_DIR). `backend/menu.json` используется только при первой инициализации. Меняйте данные через панель — последующее редактирование seed JSON не перезаписывает БД.
+Startup **does not set every dish to allergens_verified=true or published**. Doing so would turn imported unknown recipes and restaurant stop/draft decisions into false safety promises. Existing verified recipes stay verified, drafts stay drafts, availability is preserved. In the panel, a responsible restaurant employee checks real ingredients and explicitly marks each recipe verified before publication/diet-specific recommendations.
 
-```bash
-cd backend
-python manage.py backup
-python manage.py reset-password --user admin
-```
+Unknown allergy ingredients block dietary recommendations/order quote until clarification/reset. Cross-contact still requires staff confirmation. Milk allergy and lactose intolerance are not interchangeable. A red kitchen exclusion warning is an instruction to check safety, not a claim that a forbidden ingredient was removed from the recipe.
 
-Команда backup создает согласованную копию БД вместе с `encryption.key`. Архив содержит доступы — храните приватно. Для восстановления остановите сервер и верните **оба файла** в каталог данных. Не копируйте только .db во время записи — используйте backup. Архив проекта не содержит рабочих ключей, базы, сессий или тестовых ресторанных данных.
+## Guest → waiter → kitchen
 
-## Railway: точная последовательность
+Lifecycle: `created` → `confirmed` → `ready` → `completed`; created/confirmed/ready may be `cancelled`. Completed/cancelled are terminal. A created check is **not a sale**.
 
-### Что было неисправно в загруженном архиве
+### Phone approval
 
-В Konomi-main.zip были только frontend/index.html, app.js и style.css. Файлы admin.html/admin.js, серверные административные API и постоянное хранилище отсутствовали. Оба пути /admin и /admin/ уже были зарегистрированы, но вернуть отсутствующий файл они не могли. Кроме того, модель gemini-3.8-flash была зашита в исходниках, а исключения API скрывались fallback-движком. Текущая версия восстанавливает полный административный модуль, сохраняя данные меню из архива; это не только исправление редиректа.
+Admin → “Табло заказов” → set a hall PIN (4–8 digits). There is no default 1111. A guest creates a check, shows it to staff, staff chooses “Подтвердить официантом” and enters PIN. The receipt turns green and the persisted kitchen queue changes to confirmed.
 
-### 1. Содержимое репозитория
+PINs are scrypt hashes; they are not returned to the guest/admin browser. Failed attempts persist in SQLite and are throttled. Since the phone belongs to the guest, its owner could inspect entered credentials: prefer the authenticated staff board for higher security and rotate a potentially observed PIN. A PIN is not a personal staff identity.
 
-Распакуйте архив **в корень репозитория**. На одном уровне должны лежать Dockerfile, railway.json, backend/ и frontend/. Не создавайте внутри репозитория дополнительную папку Konomi-fixed. В Railway Service → Settings → Root Directory: корень репозитория (пустое поле или /), **не backend/**. Если сознательно используете monorepo, Root Directory должен указывать на папку, где одновременно находятся Dockerfile, railway.json, backend/ и frontend/.
+Receipt status needs a high-entropy capability token, not just a six-digit check code. Capabilities are not put into QR URLs/referrers or public analytics. Guest reload can restore its own receipt from sessionStorage.
 
-Закоммитьте ВСЕ файлы, особенно frontend/admin.html, frontend/admin.js, frontend/shared.js и backend/store.py. Dockerfile уже проверяет комплектность интерфейса на этапе сборки. Если файлов нет в Git, сборка завершится понятной ошибкой вместо работающего сайта с неработающей админкой.
+### Staff/kitchen board
 
-### 2. Сборка и запуск
+/admin → “Табло заказов”. Active orders show table, code, waiting time, authoritative line snapshots, total, dietary restrictions and red excluded ingredients. Buttons accept → ready → issued/paid, or reject/spam. The payment label is a **manual staff declaration**, not a POS payment receipt.
 
-Railway подхватывает railway.json: DOCKERFILE builder, Dockerfile в корне, проверка /api/ready. Конфигурация задает старт `python /opt/konomi/backend/container_entry.py`, поэтому старый пользовательский Start Command с литералом $PORT больше не должен использоваться. Очистите старые Build Command/Start Command и лишний RAILWAY_DOCKERFILE_PATH, чтобы не путать диагностику. На странице конкретного deployment убедитесь, что конфигурация взята из railway.json.
+Polling every 2 seconds gives near-real-time updates, not zero-latency messaging. A disconnected tab shows stale/connection status and reloads the authoritative database queue on recovery. Orders survive restarts. The sound is opt-in because browsers block autoplay. New pending cards and long waits are visually marked. The board returns at most 500 active orders and warns at capacity.
 
-В Dockerfile **нет инструкции VOLUME**. Код находится в /opt/konomi, а не /app: старый том на /app не маскирует файлы приложения. Стартовый Python-скрипт подготавливает права тома и затем снижает права до UID/GID 10001. Порт читается как целое число из PORT; нет ни exec-$PORT без подстановки, ни привязки к фиксированному внутреннему порту. Рабочая директория не влияет на поиск frontend.
+Approvals use SQLite BEGIN IMMEDIATE and version checks. Double confirmations are idempotent, contradictory simultaneous transitions produce 409 instead of overwriting another employee. Idempotent checkout rejects a changed body with the same key. Legacy GP codes and historical order line names/prices are preserved.
 
-### 3. Volume и переменные
+## Honest analytics
 
-Создайте Railway Volume и подключите к этому сервису по пути **/data**. Railway сам предоставит RAILWAY_VOLUME_MOUNT_PATH; приложение использует его автоматически. Не монтируйте том в /, /opt/konomi, /opt/konomi/backend или /opt/konomi/frontend.
+/admin → “Продажи и аналитика”. Dashboard refreshes every 10 seconds; board every 2 seconds. Filters: ISO/date-time creation cohort, table; history also filters status. Times are Europe/Warsaw. Order history has pages and CSV export.
 
-Минимальные Service Variables:
+- views: deduplicated menu-open events, **not verified physical QR scans**;
+- unique visitors: first-party 24-hour browser visitor cookie, not identified people;
+- ai_chats: unique visitors who sent a dialogue message, includes a truthful local/Gemini engine classification;
+- cart_adds: unique visitors with an addition event, not quantity/revenue;
+- checks_created: persisted orders in the creation period;
+- confirmed_sales: orders currently confirmed/ready/completed, excluding cancelled.
 
-| Переменная | Значение |
-|---|---|
-| ADMIN_USERNAME | admin |
-| ADMIN_PASSWORD | ваш уникальный пароль, минимум 12 символов |
-| APP_ENV | production |
-| COOKIE_SECURE | true |
-| PORT | 8000 |
+Metrics intentionally have different units (opens, visitor sessions, orders). This is not a perfectly monotone person-level funnel. Browser telemetry can be blocked/replayed by users; only staff-confirmed financial records are authoritative.
 
-GEMINI_API_KEY необязателен: удобнее сохранить ключ в админ-панели. GEMINI_MODEL по умолчанию auto. ALLOWED_ORIGINS для стандартного домена Railway обычно не нужен: RAILWAY_PUBLIC_DOMAIN добавляется автоматически. Для своего домена задайте PUBLIC_BASE_URL=https://your-domain.example и/или ALLOWED_ORIGINS с точными origin через запятую, без путей и завершающих слэшей. HTTPS proxy headers учитываются.
+Financial metrics: confirmed value, separately staff-completed value, pending value, AI-assisted vs non-AI average check with sample sizes, combo quantity and accepted upsell conversions present in sold orders. An accepted accompaniment is attributed at most once even if a guest later reorders it; omitted/unsold/cancelled additions are not booked as confirmed upsell sales. No gross margin is invented without costs.
 
-Не задавайте KONOMI_DATA_DIR вне подключенного Volume. Если осталась старая переменная с /app/backend/data, удалите ее для нового /data. Если переносите существующую базу, сначала сохраните ее вместе с encryption.key и используйте правильный путь внутри старого тома. Не удаляйте старый Volume ради исправления маршрута.
+Tables: opens, confirmed count/value. Hour chart: menu opens by Warsaw hour. Dish ranking: sold portions. Demand: explicit dish-name/unique synonym matches and category queries, **not every recommended card**. Filter statistics distinguish UI usage and mentioned dialogue exclusions. Full sales history remains available with all statuses and immutable order line snapshots.
 
-В Railway без Volume запуск намеренно блокируется, чтобы редеплой не стирал меню, ключ и пароль. Только для одноразовой демонстрации можно явно установить KONOMI_ALLOW_EPHEMERAL=true; тогда данные могут исчезнуть. Это не режим для ресторана.
+AI participation uses server-side dialogue evidence and visitor events. Average-check comparison is observational, **not proof of incremental revenue or ROI**, because guest groups are not randomized. Confirmed is not equivalent to paid; there is no POS, acquirer or receipt-printer integration in this archive.
 
-### 4. Домен и порт
+## API additions
 
-В Networking → Public Networking создайте домен. Для приведенного примера с PORT=8000 установите **Target Port=8000**. Если выберете иной PORT, измените Target Port на то же число. EXPOSE в Dockerfile — не гарантия правильного Target Port: финальный маршрут настраивается платформой.
+Public: POST /api/visit, POST /api/events, GET /api/orders/{code} with X-Order-Token, POST /api/orders/{code}/confirm with PIN and access_token.
+Staff cookie + existing write guard: GET /api/admin/board, POST /api/admin/orders/{code}/status, GET/PUT /api/admin/hall-pin, GET /api/admin/analytics, GET /api/admin/sales.
+Existing menu/chat/import/QR/auth routes remain intact. New implementation is backend/operations.py plus frontend/service-admin.js and service-guest.js; these assets are mandatory build checks.
 
-Откройте https://ВАШ-ДОМЕН/api/ready, затем https://ВАШ-ДОМЕН/admin. Работают /admin, /admin/ и /admin.html. Первая проверка не обращается к погоде или Gemini, поэтому отсутствие ключа ИИ не мешает запуску админки.
+## Verification and limitations
 
-Если нет доступа: /api/health показывает номер релиза; в новом релизе он 4.0.0-dining. Если видите 3.0, отвечает старый deployment/другой сервис. Если /api/ready=200, но браузер показывает старый интерфейс, выполните жесткое обновление страницы. HTML/API не кешируются; CSS/JS ревалидируются и имеют версию URL. Не выводятся деревья файлов контейнера и секреты в публичных ошибках.
+Run `pip install -r requirements-dev.txt`, then `pytest -q tests/test_api.py tests/test_deploy.py tests/test_dining_v4.py tests/test_service_v5.py` and `python tests/boot_check.py`.
+For browser tests install Chromium (`python -m playwright install chromium`, Linux also install-deps) and run tests/browser_service_v5.py, tests/browser_check.py, tests/ui_v4_check.py against **separate empty test data** with Browser-test-password-123. These tests mutate menu/orders and must never run against the restaurant database.
 
-### 5. Первый вход и существующий пароль
+verification.json contains the measured API/deployment result and browser scenario count. External Gemini transport is controlled in automated tests; the application itself has no fake provider. No live Gemini key, Railway account, Docker daemon or physical iOS hardware was supplied. Therefore those live environments are **not claimed as tested**. Before presentation perform the real-key connection test, actual guest-language dialogues and one live staff-approved order in your deployment.
 
-ADMIN_PASSWORD используется только при создании пользователя. Изменение переменной не сбрасывает уже существующий пароль. Сменить пароль можно в панели; восстановить при серверном доступе: python /opt/konomi/backend/manage.py reset-password --user admin. После смены все сессии аннулируются. Существующую БД нельзя заменять seed menu.json при каждом деплое — здесь такой перезаписи нет.
+## Storage and privacy
 
-## Другие хостинги и Docker
-
-```bash
-docker compose up --build
-```
-
-Для локального compose используется постоянный том /data, HOST_PORT и PORT настраиваются согласованно. В production задайте ADMIN_PASSWORD и HTTPS; локально допустим случайный пароль в терминале. Универсальный старт без Docker: python backend/serve.py; процесс должен получить постоянный каталог KONOMI_DATA_DIR и разрешенный входящий PORT. Сайт и API должны обслуживаться с одного origin.
-
-Один worker / одна реплика на SQLite. Это не распределенная БД и не multi-region-конфигурация. Для нескольких реплик нужны PostgreSQL, общий rate limiter и иная стратегия хранения. Права файла encryption.key и базы — приватные; потеря ключа при существующей БД вызывает явную ошибку, а не создает несовместимый новый ключ.
-
-Docker daemon и доступ к вашему Railway-аккаунту не предоставлены: реальная сборка образа и облачный деплой здесь не выполнялись. Проверены конфигурационные инварианты, API, запуск Python-процесса с Railway-переменными/другим PORT и браузерные сценарии. Инфраструктурные сбои провайдера, оплата аккаунта, квоты Gemini и ошибки ручной настройки не могут быть устранены одним архивом.
-
-Официальные справки: https://docs.railway.com/builds/dockerfiles ; https://docs.railway.com/config-as-code/reference ; https://docs.railway.com/guides/volumes ; https://ai.google.dev/api/models ; https://ai.google.dev/gemini-api/docs/troubleshooting
-
-## Тесты
-
-```bash
-pip install -r requirements-dev.txt
-pytest -q tests/test_api.py tests/test_deploy.py tests/test_dining_v4.py
-python tests/boot_check.py
-```
-
-API-тесты работают во временной БД и проверяют авторизацию, CSRF-заголовок, шифрование ключа, CSV/XLSX/DOCX, поля импорта, дубликаты, черновики, стоп-лист, скидки, ограничения и повторные чеки. Интеграционный скрипт `tests/browser_check.py` запускается через Playwright только против отдельного тестового сервера с ADMIN_PASSWORD=Browser-test-password-123 и отдельным KONOMI_DATA_DIR. **Не запускайте его на рабочем ресторане: он создает тестовые позиции и чеки.** Chromium нужно установить: `python -m playwright install chromium` (на Linux также install-deps).
-
-Проверены 110 API/deployment/диалоговых/QR-тестов, реальный запуск и перезапуск процесса с временным томом, 10 браузерных сценариев (Chromium desktop, 390px и 320px); это не заменяет тестирование на реальных iOS/Android устройствах. Проверка Gemini и распознавание реального PDF требуют вашего ключа и сверки результата человеком.
-
-
-## Семантика иконок
-
-Все иконки — inline SVG единого stroke 1.5. «Без свинины» — свинья с перечеркиванием, «Без глютена» — перечеркнутый колос; действия загрузки, экспорта, редактирования, настроек, выхода и микрофона используют соответствующие символы. Никаких эмодзи или внешнего icon-font/CDN. Проверка доступности состава рестораном остается обязательной — корректная иконка не является обещанием отсутствия аллергена.
+SQLite and encryption.key live together in the private Volume. Backups contain credentials and dietary data: restrict access. Events avoid storing the raw guest question, but dialogue state does store messages/restrictions with a 24-hour activity TTL. Orders/events persist for business reporting; configure an appropriate restaurant retention/privacy policy before production. Do not expose the SQLite file or data directory as static assets. Export menu JSON is not a complete system backup.

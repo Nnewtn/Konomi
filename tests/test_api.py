@@ -89,7 +89,7 @@ def test_order_idempotency_and_stable_code(client):
     body={'lines':[{'ids':['s1'],'qty':1}],'idempotency_key':'my-test-check-123'}
     r=client.post('/api/orders',json=body);again=client.post('/api/orders',json=body)
     assert r.status_code==200 and r.json()==again.json()
-    assert r.json()['status']=='guest_check'
+    assert r.json()['status']=='created'
 
 def test_unverified_never_means_allergy_safe(client):
     r=client.post('/api/chat',json={'message':'Не ем свинину и лактозу'}).json()

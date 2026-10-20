@@ -39,10 +39,11 @@ TERMS={
 'soy':r'soy\w*|soja|со[яю]\b','sesame':r'sesam\w*|sésam\w*|кунжут\w*','mustard':r'mustard|senf|moutarde|горчиц\w*|musztard\w*','celery':r'celery|sellerie|céleri|сельдере\w*|seler\w*'}
 EXCLUDE=r'без|не ем|нельзя|аллерг\w*|не перенос\w*|не вжива\w*|алергі\w*|no\b|without|allerg\w*|avoid|free from|bez\b|nie jem|ohne|kein\w*|vertrage.{0,12}nicht|sans\b|sin\b|s[ée]nza|sem\b|intoler\w*|zonder|sauf'
 
-def parse(text):
-    low=text.casefold();ex=set()
+def parse_base(text):
+    # Stop an exclusion clause at an explicit positive preference.
+    low=re.sub(r'\b(?:а?\s*хочу|але хочу|but i want|and i want|aber ich möchte|chcę za to)\b',';',text.casefold());ex=set()
     for code,pattern in TERMS.items():
-        if re.search(r'(?:'+EXCLUDE+r').{0,90}(?:'+pattern+r')',low) or re.search(r'(?:'+pattern+r')[- ]?(?:free|frei)\b',low):ex.add(code)
+        if re.search(r'(?:'+EXCLUDE+r')[^;.!?]{0,90}(?:'+pattern+r')',low) or re.search(r'(?:'+pattern+r')[- ]?(?:free|frei)\b',low):ex.add(code)
     if 'milk' in ex:ex.add('lactose')
     diets={d for d,p in {'vegan':r'веган|vegan|v[ée]g[ée]talien','vegetarian':r'вегетариан|vegetarian|wegetarian|vegetarisch|v[ée]g[ée]tarien','halal':r'halal|халяль|حلال','kosher':r'kosher|кошер|casher'}.items() if re.search(p,low)}
     budget=re.search(r'(?:до\b|under\b|below\b|do\b|budget\b|бюджет\w*|bis\b|unter\b|maximal\b|maximum\b|moins de|hasta\b|fino a|at[ée]\b|tot\b)\s*(\d+(?:[.,]\d{1,2})?)',low)
@@ -116,3 +117,95 @@ def accompaniment(base,items,cart_ids,prefs,weather,cart_total):
     candidates=[d for d in candidates if d['id'] not in cart_ids and d['id']!=base['id']]
     if prefs.get('budget') is not None:candidates=[d for d in candidates if cents(cart_total)+cents(d['price'])<=cents(prefs['budget'])]
     return next(iter(rank(candidates,prefs,weather,base)),None)
+
+
+# Intent matching is a hard filter BEFORE price/margin ranking, never an LLM hint.
+SYNONYMS={
+'SOUP':['суп','супа','супом','супчик','супчика','супы','бульон','журек','росол','квасница','борщ','первое','похлебка','похлёбка','жидкое','крем-суп','soup','soups','broth','zupa','zupy','zupę','zupe','żurek','zurek','rosół','rosol','kwaśnica','kwasnica','krem','suppe','suppen','юшка','бульйон'],
+'DUCK':['утка','утку','утиное','качка','качку','duck','kaczka','kaczkę','ente','entenbrust'],
+'GOOSE':['гусь','гуся','гусиная','гусиную','гусак','гусятина','goose','gęś','gesi','gęsia','gęsiny','gans','gänse'],
+'POULTRY':['птица','птицу','курица','курицу','птиця','курка','poultry','chicken','drób','kurczak','geflügel','hähnchen'],
+'MEAT':['мясо','мясное','мяса','мясу','м’ясо',"м'ясо",'meat','mięso','mieso','fleisch'],
+'PORK':['свинина','свинину','рулька','рульку','свиняче','pork','golonka','wieprzowina','wieprzowiny','schwein','schweinefleisch','schweinshaxe'],
+'DUMPLINGS':['картачи','картаче','картач','клёцки','клецки','картофель','картошку','вареники','картопля','галушки','dumpling','dumplings','potato','potatoes','kartacze','ziemniaki','kluski','kartoffel','kartoffeln','knödel'],
+'FISH':['рыба','рыбу','рыбы','форель','рибa','риба','рибу','fish','trout','ryba','rybę','pstrąg','pstrag','fisch','forelle'],
+'LIGHT':['салат','салаты','легкое','лёгкое','легкий','лёгкий','лёгкого','легкого','легка','легке','salad','light','sałatka','salatka','lekko','lekkie','salat','leicht','leichtes'],
+'DESSERT':['десерт','десерты','сладкое','торт','чизкейк','солодке','dessert','desserts','cake','cheesecake','deser','ciasto','sernik','nachtisch','kuchen'],
+'DRINK':['напиток','напитки','пить','попить','компот','морс','напій','напої','drink','drinks','beverage','juice','kompot','napój','napoje','getränk','getränke','trinken'],
+'WARMING':['согреться','горячее','горячий','замерз','замёрз','тепле','зігрітися','warming','warm','hot','rozgrzewające','ciepłe','gorące','wärmend','heiß'],
+'COLD':['холодное','холодный','прохладное','холодне','cold','chilled','zimne','chłodne','kalt','gekühlt'],
+'BUDGET':['бюджет','злотых','злотих','pln','zł','budget','under','bis','euro','на двоих','на двох','for two','für zwei','dla dwóch'],
+'UNAVAILABLE_FOOD':['суши','пицца','пиццу','роллы','роллов','кебаб','піца','піцу','роли','sushi','pizza','rolls','kebab','döner'],
+'PROMPT_INJECTION':['забудь инструкции','игнорируй инструкции','скидку 100','скидка 100','промокод admin','ignore instructions','ignore previous','system prompt','discount 100','forget instructions','admin promo','ignoruj instrukcje','rabatu 100','ignoriere anweisungen','rabatt 100','забудь інструкції']}
+
+def term_hit(text,term):
+    return bool(re.search(r'(?<!\w)'+re.escape(term)+r'(?!\w)',text,re.I))
+
+def parse(text):
+    flags=parse_base(text);low=text.casefold()
+    found={key for key,terms in SYNONYMS.items() if any(term_hit(low,t) for t in terms)}
+    # Exclusion mentions must NOT be turned into positive meat/fish category intent.
+    if 'pork' in flags['excludes']:found.discard('PORK')
+    if 'fish' in flags['excludes']:found.discard('FISH')
+    for topic in list(found):
+        if topic in ('PROMPT_INJECTION','UNAVAILABLE_FOOD','BUDGET'):continue
+        terms=SYNONYMS[topic]
+        negative=r'(?:не хочу|не надо|не люблю|без|не|no|not|without|keine?|ohne|nie chcę|bez)\s+(?:'+ '|'.join(re.escape(t) for t in terms)+r')(?!\w)'
+        positive_terms=[t for t in terms if term_hit(low,t)]
+        if positive_terms and all(re.search(r'(?:не хочу|не надо|не люблю|без|не|no|not|without|keine?|ohne|nie chcę|bez)\s+'+re.escape(t)+r'(?!\w)',low) for t in positive_terms):found.discard(topic)
+    flags['topics']=sorted(found)
+    flags['light']|='LIGHT' in found
+    if flags['budget'] is None:
+        budget=re.search(r'(\d+(?:[.,]\d{1,2})?)\s*(?:pln|zł|злот\w*)',low)
+        if budget:flags['budget']=float(budget.group(1).replace(',','.'))
+    flags['people']=2 if re.search(r'на двоих|на двох|for two|für zwei|dla dw[oó]ch|2\s*(?:person|osob|челов|людин)',low) else 1
+    if re.search(r'(?:per person|на человека|pro person|na osobę)',low):flags['people']=1
+    return flags
+
+def select(items,prefs,weather):
+    topics=set(prefs.get('topics',[]));pool=list(items)
+    if 'SOUP' in topics:pool=[d for d in pool if d['category']=='soup']
+    elif 'DESSERT' in topics:pool=[d for d in pool if d['category']=='dessert']
+    elif 'DRINK' in topics:pool=[d for d in pool if d['category']=='beverage']
+    elif topics & {'DUCK','GOOSE','POULTRY','MEAT','PORK','DUMPLINGS','FISH','LIGHT'}:
+        pool=[d for d in pool if d['category'] in ('main','starter')]
+    elif 'WARMING' in topics:pool=[d for d in pool if d['category'] in ('soup','main')]
+    elif not prefs.get('combo') and not prefs.get('diets'):pool=[d for d in pool if d['category'] in ('soup','main','starter')]
+    patterns={'DUCK':r'kaczk|duck|утк|качк|ente','GOOSE':r'gę[sś]|gesi|goose|гус|gans|gäns','POULTRY':r'kaczk|gę[sś]|kurcz|duck|goose|chicken|птиц|кур|geflügel','PORK':r'golonka|wieprz|pork|свин|schwein','DUMPLINGS':r'kartacz|ziemnia|potato|клец|клёц|карто|dumpling|knödel','FISH':r'pstr[aą]g|fish|trout|форел|рыб|риб|fisch|forelle'}
+    for topic,pattern in patterns.items():
+        if topic in topics:
+            pool=[d for d in pool if re.search(pattern,d['name']+' '+d.get('ingredients',''),re.I)]
+    if 'MEAT' in topics and not topics & {'DUCK','GOOSE','POULTRY','PORK','DUMPLINGS'}:
+        pool=[d for d in pool if d['category']=='main' and re.search(r'mięs|meat|golonka|kaczk|gę[sś]|pork|duck|goose',d['name']+' '+d.get('ingredients',''),re.I)]
+    if 'LIGHT' in topics:pool=[d for d in pool if 'light' in d.get('tags',[]) or re.search(r'sałat|salad|pstr[aą]g',d['name'],re.I)]
+    if 'COLD' in topics:pool=[d for d in pool if d['category'] in ('beverage','dessert') and not set(d.get('tags',[])) & {'hot','warming'}]
+    if prefs.get('budget') is not None:
+        max_unit=cents(prefs['budget'])//prefs.get('people',1)
+        pool=[d for d in pool if cents(d['price'])<=max_unit]
+    return rank(pool,prefs,weather)
+
+
+def local_reply(lang,key,items,state=None):
+    state=state or {};names=' / '.join(d['name'] for d in items[:3])
+    if key in ('recommend','unavailable') and names:
+        introductions={
+        'ru':('Начнём с','Этого блюда нет в нашем меню. Вместо него рекомендую'),
+        'pl':('Polecam','Tego dania nie ma w naszym menu. Zamiast niego polecam'),
+        'en':('Let me recommend','That dish is not on our menu. Instead, I recommend'),
+        'de':('Ich empfehle Ihnen','Dieses Gericht steht nicht auf unserer Karte. Stattdessen empfehle ich'),
+        'uk':('Рекомендую','Цієї страви немає в нашому меню. Натомість рекомендую')}
+        if lang in introductions:
+            reply=introductions[lang][key=='unavailable']+' '+names+'.'
+            # Use authored restaurant descriptions, never invent sensory/ingredient facts.
+            desc=items[0].get('desc',{}).get(lang,'')
+            if desc:reply+=' '+desc[:500]
+            return reply
+    return say(lang,key,**({'name':items[0]['name']} if key=='upsell' and items else {}))
+
+
+def upsell_line(lang,name):
+    return {'ru':f'К этому выбору предложу {name}; добавить его можно отдельно, по желанию.',
+    'pl':f'Do tego wyboru proponuję {name}; dodatek jest opcjonalny.',
+    'en':f'To accompany your choice, I suggest {name}; adding it is optional.',
+    'de':f'Dazu empfehle ich {name}; die Ergänzung ist freiwillig.',
+    'uk':f'До цього вибору пропоную {name}; доповнення за бажанням.'}.get(lang,'')

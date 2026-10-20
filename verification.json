@@ -1,12 +1,11 @@
 {
-  "release": "4.0.0-dining",
-  "backend_pytest": {
-    "tests": 110,
-    "failures": 0,
-    "errors": 0,
-    "skipped": 0
-  },
-  "browser_scenarios": [
+  "release": "5.0.0-service",
+  "api_tests": 162,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "browser_scenarios": 21,
+  "browser_checks": [
     "Menu loads from API",
     "Cart above chat, accessible checkout, real stored guest check",
     "Combo added, server total includes full-price individual dish",
@@ -21,12 +20,22 @@
     "RU UI / German guest => German reply; PL UI switch preserves chat; English guest => English",
     "Main dish triggers optional AI message; decline adds nothing and stops further offers",
     "Accept adds real item once; reload keeps it; table number survives into guest check",
-    "Admin generates 30 table URLs and downloads a real print PDF; form inputs 16px"
+    "Admin generates 30 table URLs and downloads a real print PDF; form inputs 16px",
+    "PL interface / Russian soup request => Russian response and only soup cards",
+    "Guest creates a real pending check; board receives it; pending is not revenue",
+    "Wrong PIN rejected; staff PIN approves guest receipt and updates the kitchen",
+    "Ready → completed is persisted; confirmed/completed totals and funnel are exact",
+    "History filters table correctly; CSV download contains the confirmed sale",
+    "320/390px staff screens fit; reload restores a protected guest receipt"
   ],
-  "browser_javascript_errors": [],
-  "qr_verification": "30 PNG symbols decoded plus 30 symbols decoded from rendered five-page A4 PDF",
-  "process_smoke": "Dynamic PORT, unrelated working directory, restart retaining database/encryption key/admin password/menu: passed",
-  "external_ai": "Controlled provider mocks; no live Gemini credentials supplied",
-  "cloud_and_devices": "No real Railway deployment or physical iOS device run in this environment",
-  "guide": "Konomi_AI_Complete_System_Guide_v2.docx reviewed; implementation scope and non-implemented research components documented in README.md"
+  "javascript_errors": [],
+  "boot": "dynamic PORT, independent CWD, admin routes and restart persistence passed",
+  "external_provider": "Gemini REST transport mocked in automated tests; no live key supplied",
+  "not_tested": [
+    "live Gemini account",
+    "Railway deployment",
+    "Docker image build",
+    "physical iOS hardware"
+  ],
+  "warning": "Starlette TestClient/httpx deprecation warning; no failing assertions"
 }

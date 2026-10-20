@@ -2,13 +2,14 @@
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from runtime import data_dir, production, validate_data_location
 
 ROOT = Path(__file__).resolve().parent
@@ -42,16 +43,21 @@ def check_password(password, stored):
 def cipher():
     return Fernet((DATA / 'encryption.key').read_bytes())
 
+def create_encryption_key(key):
+    fd = os.open(key, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    with os.fdopen(fd, 'wb') as f:f.write(Fernet.generate_key())
+
 def init():
     validate_data_location()
     DATA.mkdir(parents=True, exist_ok=True, mode=0o700)
     key = DATA / 'encryption.key'
     if not key.exists():
         if (DATA / 'konomi.db').exists():
-            raise RuntimeError('Encryption key is missing beside an existing database. Restore encryption.key from the same backup; do not create a replacement.')
-        fd = os.open(key, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        with os.fdopen(fd, 'wb') as f:
-            f.write(Fernet.generate_key())
+            if not (os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')):
+                raise RuntimeError('Encryption key is missing beside an existing database. Restore encryption.key from the same backup; do not create a replacement.')
+            logging.getLogger('konomi').warning('Encryption key missing; environment Gemini key available. Restore original encryption.key before saving encrypted secrets.')
+        else:
+            create_encryption_key(key)
     with db() as c:
         c.execute('PRAGMA journal_mode=WAL')
         c.executescript('''
@@ -87,11 +93,22 @@ def settings():
         values = {r['key']:json.loads(r['value']) for r in c.execute('SELECT * FROM settings')}
     return {'model':os.getenv('GEMINI_MODEL','auto'), 'discount':15, 'venue':'Gęsi Puch', 'city':'Łódź', 'currency':'PLN', **values}
 
+KEY_STATE={'source':'none','storage_error':False}
 def api_key():
-    values = settings()
-    if 'gemini_key' in values:
-        return cipher().decrypt(values['gemini_key'].encode()).decode() if values['gemini_key'] else ''
-    return os.getenv('GEMINI_API_KEY','').strip()
+    """Never leak ciphertext/errors. An environment key can recover an unreadable vault."""
+    KEY_STATE.update(source='none',storage_error=False)
+    try:
+        encrypted=settings().get('gemini_key')
+        if encrypted:
+            value=cipher().decrypt(encrypted.encode()).decode().strip()
+            if value:
+                KEY_STATE['source']='store';return value
+    except (OSError, ValueError, TypeError, UnicodeError, InvalidToken):
+        KEY_STATE['storage_error']=True
+    for name in ('GEMINI_API_KEY','GOOGLE_API_KEY'):
+        value=os.getenv(name,'').strip()
+        if value:KEY_STATE['source']=name;return value
+    return ''
 
 def audit(action, detail=''):
     with db() as c:
