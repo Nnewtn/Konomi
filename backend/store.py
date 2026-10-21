@@ -53,7 +53,7 @@ def init():
     key = DATA / 'encryption.key'
     if not key.exists():
         if (DATA / 'konomi.db').exists():
-            if not (os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')):
+            if not (os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY') or os.getenv('OPENAI_API_KEY')):
                 raise RuntimeError('Encryption key is missing beside an existing database. Restore encryption.key from the same backup; do not create a replacement.')
             logging.getLogger('konomi').warning('Encryption key missing; environment Gemini key available. Restore original encryption.key before saving encrypted secrets.')
         else:
@@ -89,23 +89,24 @@ def dishes():
         return [dict(json.loads(r['payload']), version=r['version']) for r in c.execute('SELECT * FROM dishes ORDER BY rowid')]
 
 def settings():
-    with db() as c:
-        values = {r['key']:json.loads(r['value']) for r in c.execute('SELECT * FROM settings')}
-    return {'model':os.getenv('GEMINI_MODEL','auto'), 'discount':15, 'venue':'Gęsi Puch', 'city':'Łódź', 'currency':'PLN', **values}
+    with db() as c:values={r['key']:json.loads(r['value']) for r in c.execute('SELECT * FROM settings')}
+    cfg={'model':os.getenv('GEMINI_MODEL','auto'),'openai_model':os.getenv('OPENAI_MODEL','gpt-4o-mini'),'ai_provider':os.getenv('AI_PROVIDER','auto'),'discount':15,'venue':os.getenv('VENUE_NAME','Restaurant'),'city':os.getenv('VENUE_CITY',''),'currency':os.getenv('VENUE_CURRENCY','PLN'),'tone':'warm, professional, helpful','latitude':None,'longitude':None,'timezone':'Europe/Warsaw',**values}
+    cfg['combo_discount']=values.get('combo_discount',cfg['discount']);cfg['discount']=cfg['combo_discount']
+    return cfg
 
 KEY_STATE={'source':'none','storage_error':False}
-def api_key():
+def api_key(provider='gemini'):
     """Never leak ciphertext/errors. An environment key can recover an unreadable vault."""
     KEY_STATE.update(source='none',storage_error=False)
     try:
-        encrypted=settings().get('gemini_key')
+        encrypted=settings().get('openai_key' if provider=='openai' else 'gemini_key')
         if encrypted:
             value=cipher().decrypt(encrypted.encode()).decode().strip()
             if value:
                 KEY_STATE['source']='store';return value
     except (OSError, ValueError, TypeError, UnicodeError, InvalidToken):
         KEY_STATE['storage_error']=True
-    for name in ('GEMINI_API_KEY','GOOGLE_API_KEY'):
+    for name in (('OPENAI_API_KEY',) if provider=='openai' else ('GEMINI_API_KEY','GOOGLE_API_KEY')):
         value=os.getenv(name,'').strip()
         if value:KEY_STATE['source']=name;return value
     return ''

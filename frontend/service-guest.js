@@ -30,6 +30,6 @@
  }
  window.konomiReceipt=controls;
  // A reload keeps the capability in sessionStorage, never in the URL/referrer or analytics.
- try{const r=JSON.parse(sessionStorage.getItem(storage)||'null');if(r?.access_token&&r?.code){current=r;const b=document.createElement('button');b.className='secondary receipt-restore';b.textContent=r.code+' · '+locale().waiting;b.onclick=()=>{q('#receipt').innerHTML=`<h3>${e(r.code)} · Table ${e(r.table??'—')}</h3>${r.lines.map(l=>`<p>${l.qty} × ${l.names.map(e).join(' + ')}</p>`).join('')}<strong>${Number(r.total).toFixed(2)} PLN</strong>`;controls(r);q('#receiptDialog').showModal();poll();};q('#menuTitle').parentElement.append(b);}}catch{}
+ try{const r=JSON.parse(sessionStorage.getItem(storage)||'null');if(r?.access_token&&r?.code){current=r;const b=document.createElement('button');b.className='secondary receipt-restore';b.textContent=r.code+' · '+locale().waiting;b.onclick=()=>{q('#receipt').innerHTML=`<h3>${e(r.code)} · Table ${e(r.table??'—')}</h3>${r.lines.map(l=>`<p>${l.qty} × ${l.names.map(e).join(' + ')}</p>`).join('')}<strong>${Number(r.total).toFixed(2)} ${e(r.currency||'PLN')}</strong>`;controls(r);q('#receiptDialog').showModal();poll();};q('#menuTitle').parentElement.append(b);}}catch{}
  document.addEventListener('visibilitychange',()=>{if(!document.hidden)poll();});
 })();

@@ -42,7 +42,7 @@ def test_wrong_language_model_is_repaired_or_falls_back(client,monkeypatch):
   calls.append(prompt)
   if prompt.startswith('Extract'):return {'intent':'menu'}
   return {'reply':'Here are some lovely dishes for your dinner.'}
- monkeypatch.setattr(store,'api_key',lambda:'fake');monkeypatch.setattr(main,'generate',wrong)
+ monkeypatch.setattr(store,'api_key',lambda provider='gemini':'fake' if provider=='gemini' else '');monkeypatch.setattr(main,'generate',wrong)
  r=client.post('/api/chat',json={'message':'Guten Tag, was empfehlen Sie?','context':{'lang':'ru'}}).json()
  assert r['lang']=='de' and r['engine']=='rules' and languages.matches(r['reply'],'de')
  assert any('CORRECTION:' in p for p in calls)
@@ -50,7 +50,7 @@ def test_wrong_language_model_is_repaired_or_falls_back(client,monkeypatch):
 
 def test_provider_failure_never_leaks_to_guest(client,monkeypatch):
  async def fail(*args,**kwargs):raise main.HTTPException(502,'fake-secret-error')
- monkeypatch.setattr(store,'api_key',lambda:'fake');monkeypatch.setattr(main,'generate',fail)
+ monkeypatch.setattr(store,'api_key',lambda provider='gemini':'fake' if provider=='gemini' else '');monkeypatch.setattr(main,'generate',fail)
  r=client.post('/api/chat',json={'message':'What would you recommend?'}).json()
  assert r['engine']=='rules' and 'fake-secret' not in r['reply'] and r['lang']=='en'
 
@@ -69,7 +69,8 @@ def test_diet_restrictions_survive_truncated_history_and_cannot_clear_via_client
  r=client.post('/api/chat',json={'message':'I am allergic to milk'}).json();token=r['session_id']
  for n in range(11):
   res=client.post('/api/chat',json={'message':'What would you recommend?','session_id':token,'history':[],'excludes':[]}).json()
- assert {'milk','lactose'}.issubset(res['excludes']) and res['dishes']==[]
+ assert {'milk','lactose'}.issubset(res['excludes']) and res['dishes']
+ assert all(not ({'milk','lactose'} & set(d['allergens'])) for d in store.dishes() if d['id'] in res['dishes'])
  assert client.post('/api/chat/reset-constraints',json={'session_id':token}).status_code==200
  res=client.post('/api/chat',json={'message':'What would you recommend?','session_id':token}).json()
  assert res['excludes']==[] and res['dishes']
@@ -114,6 +115,7 @@ def test_accept_offer_revalidates_current_conditions(client,change):
  if change=='stop':update(client,'b1',available=False)
  elif change=='delete':client.delete('/api/admin/menu/b1',headers=HEAD)
  elif change=='diet':
+  update(client,'b1',allergens=['milk'])
   state=guest_state.load(token);state['excludes']=['milk'];guest_state.save(token,state)
  elif change=='expired':
   state=guest_state.load(token);state['offer']['expires']=0;guest_state.save(token,state)
@@ -210,9 +212,9 @@ def test_polite_punctuated_refusals_stop_future_upsells(client,text):
 
 def test_unknown_allergy_is_not_forgotten_and_blocks_final_check(client):
  first=client.post('/api/chat',json={'message':'I am allergic to kiwi'}).json()
- assert first['needs_staff'] and first['dishes']==[]
+ assert first['needs_staff'] and first['dishes'] and first['cart_actions']==[]
  second=client.post('/api/chat',json={'message':'Build a combo please','session_id':first['session_id']}).json()
- assert second['dishes']==[] and second['combo'] is None
+ assert second['needs_staff'] and second['combo'] is None and second['cart_actions']==[]
  order={'lines':[{'ids':['m1'],'qty':1}],'session_id':first['session_id'],'idempotency_key':'unsafe-unknown-allergy-check-0001'}
  assert client.post('/api/orders',json=order).status_code==409
 

@@ -83,7 +83,7 @@ def test_discount_applies_to_combo_only(client):
     r=client.post('/api/order/quote',json=body)
     assert r.status_code==200 and r.json()['total']==135.25
     assert r.json()['saving']==18.75
-    assert client.post('/api/order/quote',json={'lines':[{'ids':['m1','m2','b1'],'qty':1,'combo':True}]}).status_code==422
+    assert client.post('/api/order/quote',json={'lines':[{'ids':['m1','m1','b1'],'qty':1,'combo':True}]}).status_code==422
 
 def test_order_idempotency_and_stable_code(client):
     body={'lines':[{'ids':['s1'],'qty':1}],'idempotency_key':'my-test-check-123'}
@@ -93,18 +93,23 @@ def test_order_idempotency_and_stable_code(client):
 
 def test_unverified_never_means_allergy_safe(client):
     r=client.post('/api/chat',json={'message':'Не ем свинину и лактозу'}).json()
-    assert r['dishes']==[] and 'pork' in r['excludes'] and 'lactose' in r['excludes']
-    assert client.post('/api/order/quote',json={'lines':[{'ids':['m3'],'qty':1}],'excludes':['pork']}).status_code==409
+    assert r['dishes'] and 'pork' in r['excludes'] and 'lactose' in r['excludes']
+    assert all(not ({'pork','lactose'} & set(d['allergens'])) for d in store.dishes() if d['id'] in r['dishes'])
+    assert any(not r['dish_annotations'][i]['allergens_verified'] for i in r['dishes'])
+    assert client.post('/api/order/quote',json={'lines':[{'ids':['m3'],'qty':1}],'excludes':['pork']}).status_code==200
+    assert client.post('/api/order/quote',json={'lines':[{'ids':['m1'],'qty':1}],'excludes':['pork']}).status_code==409
     auth(client);update(client,'s1',allergens_verified=True);update(client,'m3',allergens_verified=True)
     r=client.post('/api/chat',json={'message':'Не ем свинину и лактозу'}).json()
-    assert set(r['dishes'])=={'s1','m3'}
+    assert {'s1','m3'}.issubset(r['dishes'])
+    assert set(r['dishes'])=={d['id'] for d in store.dishes() if not set(d['allergens']) & {'pork','lactose'}}
 
 def test_exclusion_persistence_and_mentions(client):
     assert not main.exclusions('Хочу свинину')
     assert 'gluten' in main.exclusions('gluten-free please')
     assert 'pork' in main.exclusions('no pork')
     r=client.post('/api/chat',json={'message':'Собери комбо','history':[{'role':'user','content':'Без свинины'}]}).json()
-    assert r['combo'] is None and r['excludes']==['pork']
+    assert r['combo'] and r['excludes']==['pork']
+    assert all('pork' not in d['allergens'] for d in store.dishes() if d['id'] in r['combo']['ids'])
 
 def test_csv_mapping_raw_details_draft_commit(client):
     auth(client)
@@ -150,18 +155,18 @@ def test_import_file_limits_and_types(client):
     assert preview(client,b'x'*5_000_001).status_code==413
     assert preview(client,b'{broken','menu.json').status_code==422
 
-def test_ai_cannot_override_deterministic_selection(client,monkeypatch):
+def test_ai_selects_full_catalog_then_ids_are_validated(client,monkeypatch):
     async def fake(request,prompt):return {'reply':'Try these dishes','dishes':['not-real','s1'],'combo':{'ids':['s1','m1','m2']}}
-    monkeypatch.setattr(main,'generate',fake);monkeypatch.setattr(store,'api_key',lambda:'test')
+    monkeypatch.setattr(main,'generate',fake);monkeypatch.setattr(store,'api_key',lambda provider='gemini':'test' if provider=='gemini' else '')
     r=client.post('/api/chat',json={'message':'Hi'}).json()
-    assert r['dishes']==['s1','s2','s3'] and 'not-real' not in r['dishes'] and r['combo'] is None and r['engine']=='gemini'
+    assert r['dishes']==['s1'] and 'not-real' not in r['dishes'] and r['combo']['discount']==15 and r['engine']=='gemini'
 
 def test_weather_does_not_invent_temperature(client,monkeypatch):
     main.WEATHER.update(ts=0,data=None)
     async def fail(*args,**kwargs):raise main.httpx.ConnectError('offline')
     monkeypatch.setattr(client.app.state.http,'get',fail)
     r=client.get('/api/weather').json()
-    assert r['temp'] is None and r['source']=='unavailable'
+    assert r['temp'] is None and r['source']=='not-configured'
 
 def test_password_rotation_invalidates_all_sessions(client):
     auth(client)

@@ -1,10 +1,10 @@
 {
-  "release": "5.0.0-service",
-  "api_tests": 162,
+  "release": "6.0.0-universal",
+  "tests": 192,
   "failures": 0,
   "errors": 0,
   "skipped": 0,
-  "browser_scenarios": 21,
+  "browser_scenarios": 28,
   "browser_checks": [
     "Menu loads from API",
     "Cart above chat, accessible checkout, real stored guest check",
@@ -26,16 +26,31 @@
     "Wrong PIN rejected; staff PIN approves guest receipt and updates the kitchen",
     "Ready → completed is persisted; confirmed/completed totals and funnel are exact",
     "History filters table correctly; CSV download contains the confirmed sale",
-    "320/390px staff screens fit; reload restores a protected guest receipt"
+    "320/390px staff screens fit; reload restores a protected guest receipt",
+    "Venue, tone and provider settings save in real admin; unverified recipes stay visible",
+    "All four soups rendered, with four usable add buttons and no verification gate",
+    "Natural-language add updates real cart quantities and server quote",
+    "Remove and clear execute through cart_actions, not just conversational promises",
+    "No-meat catalogue includes actual vegetarian choices and labelled fish, not empty handoff text",
+    "Delayed model action cannot overwrite a manual cart change; history and cart are sent",
+    "New universal controls and multi-card chat fit 320px and 390px viewports"
   ],
   "javascript_errors": [],
-  "boot": "dynamic PORT, independent CWD, admin routes and restart persistence passed",
-  "external_provider": "Gemini REST transport mocked in automated tests; no live key supplied",
+  "architecture_checks": [
+    "111 available dishes in provider context, no dietary/verified pre-pruning",
+    "50 arbitrary recommendation cards",
+    "11 group plan cards, server-owned money/weight",
+    "explicit commands only, atomic cart effects, replay protection",
+    "full authoritative history and current cart",
+    "OpenAI and Gemini HTTP adapter tests"
+  ],
+  "boot": "dynamic PORT, unrelated CWD, admin URLs and persistent restart passed",
+  "external_services": "Mock HTTP transport in provider tests; no live account credentials supplied",
   "not_tested": [
     "live Gemini account",
+    "live OpenAI account",
     "Railway deployment",
     "Docker image build",
     "physical iOS hardware"
-  ],
-  "warning": "Starlette TestClient/httpx deprecation warning; no failing assertions"
+  ]
 }

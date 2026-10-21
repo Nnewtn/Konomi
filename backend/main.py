@@ -39,7 +39,7 @@ import operations
 
 log = logging.getLogger('konomi')
 FRONT = frontend_dir()
-RELEASE = '5.0.0-service'
+RELEASE = '6.0.0-universal'
 
 @asynccontextmanager
 async def lifespan(app):
@@ -53,7 +53,7 @@ async def lifespan(app):
     yield
     await app.state.http.aclose()
 
-app = FastAPI(title='Konomi AI', version='5.0.0', lifespan=lifespan)
+app = FastAPI(title='Konomi AI', version='6.0.0', lifespan=lifespan)
 origins=[o.strip() for o in os.getenv('ALLOWED_ORIGINS','http://localhost:8000,http://127.0.0.1:8000').split(',') if o.strip() and o.strip()!='*']
 for candidate in [os.getenv('PUBLIC_BASE_URL',''), 'https://'+os.getenv('RAILWAY_PUBLIC_DOMAIN','') if os.getenv('RAILWAY_PUBLIC_DOMAIN') else '']:
     parsed=urlsplit(candidate)
@@ -146,24 +146,47 @@ def change_password(body:Password,user=Depends(admin)):
 class Settings(BaseModel):
     venue:str=Field(min_length=1,max_length=120)
     model:str=Field(default='auto',pattern=r'^[a-zA-Z0-9.\-_]{3,100}$')
-    discount:int=Field(ge=10,le=15,default=15)
+    discount:int=Field(ge=0,le=30,default=15)
     gemini_key:str|None=Field(default=None,max_length=300)
     clear_key:bool=False
+    currency:str=Field(default='PLN',pattern=r'^[A-Z]{3}$')
+    tone:str=Field(default='warm, professional, helpful',min_length=1,max_length=300)
+    combo_discount:int|None=Field(default=None,ge=0,le=30)
+    ai_provider:Literal['auto','gemini','openai']='auto'
+    openai_model:str=Field(default='gpt-4o-mini',pattern=r'^[a-zA-Z0-9.\-_:]{3,100}$')
+    openai_key:str|None=Field(default=None,max_length=500)
+    clear_openai_key:bool=False
+    city:str=Field(default='',max_length=100)
+    latitude:float|None=Field(default=None,ge=-90,le=90)
+    longitude:float|None=Field(default=None,ge=-180,le=180)
+    timezone:str=Field(default='Europe/Warsaw',max_length=80)
 
 @app.get('/api/admin/settings')
 def get_settings(user=Depends(admin)):
-    cfg=store.settings(); key=store.api_key()
-    return {'venue':cfg['venue'],'model':cfg['model'],'discount':cfg['discount'],'key_configured':bool(key),'key_hint':('••••'+key[-4:]) if key else '', 'ai_status':ai_provider.STATE}
+    cfg=store.settings(); key=store.api_key() or ai_provider.openai_key()
+    return {'venue':cfg['venue'],'model':cfg['model'],'discount':cfg['discount'],'key_configured':bool(key),'key_hint':('••••'+key[-4:]) if key else '', 'ai_status':ai_provider.STATE,**{k:cfg[k] for k in ('currency','tone','combo_discount','ai_provider','openai_model','city','latitude','longitude','timezone')},'openai_key_configured':bool(ai_provider.openai_key()),'gemini_key_configured':bool(store.api_key())}
 
 @app.put('/api/admin/settings')
 def set_settings(body:Settings,user=Depends(admin)):
-    values=body.model_dump(exclude={'gemini_key','clear_key'})
+    values=body.model_dump(exclude={'gemini_key','clear_key','openai_key','clear_openai_key'},exclude_unset=True)
+    try:ZoneInfo(body.timezone)
+    except Exception:raise HTTPException(422,'Неизвестная временная зона')
+    if 'currency' in values and values['currency']!=store.settings()['currency']:
+        with store.db() as c:
+            if c.execute('SELECT 1 FROM orders LIMIT 1').fetchone():raise HTTPException(409,'Нельзя менять валюту при существующих чеках: сначала создайте отдельное заведение/базу. Автоконвертация цен не выполняется.')
+    configured_discount=body.combo_discount if body.combo_discount is not None else body.discount
+    values.update(combo_discount=configured_discount,discount=configured_discount)
+    if body.clear_openai_key:values['openai_key']=''
+    elif body.openai_key and body.openai_key.strip():
+        try:values['openai_key']=store.cipher().encrypt(body.openai_key.strip().encode()).decode()
+        except (OSError,ValueError):raise HTTPException(503,'Восстановите encryption.key или используйте OPENAI_API_KEY в переменных сервиса.')
     if body.clear_key: values['gemini_key']=''
     elif body.gemini_key and body.gemini_key.strip():
         try:values['gemini_key']=store.cipher().encrypt(body.gemini_key.strip().encode()).decode()
         except (OSError,ValueError):raise HTTPException(503,'Восстановите encryption.key из резервной копии. Пока используйте GEMINI_API_KEY в переменных сервиса.')
     with store.db() as c:
         for k,v in values.items(): c.execute('INSERT OR REPLACE INTO settings VALUES (?,?)',(k,store.encode(v)))
+    if any(k in values for k in ('city','latitude','longitude','timezone')):WEATHER.update(ts=0,data=None)
     ai_provider.clear_cache()
     ai_provider.STATE.update(last_error=None,resolved_model=None)
     store.audit('settings_updated','AI key value never logged')
@@ -179,7 +202,7 @@ async def ai_models(request:Request,refresh:bool=False,user=Depends(admin)):
 
 @app.get('/api/admin/diagnostics')
 def diagnostics(user=Depends(admin)):
-    return {'release':RELEASE,'frontend_complete':all((FRONT/name).is_file() for name in ('index.html','admin.html','admin.js','shared.js','app.js','style.css')),'storage':'railway-volume' if os.getenv('RAILWAY_VOLUME_MOUNT_PATH') else 'configured-directory' if os.getenv('KONOMI_DATA_DIR') else 'local','persistent_volume_detected':bool(os.getenv('RAILWAY_VOLUME_MOUNT_PATH')),'key_configured':bool(store.api_key()),'model':store.settings()['model'],'ai':ai_provider.STATE,'key_recovery':store.KEY_STATE}
+    return {'release':RELEASE,'frontend_complete':all((FRONT/name).is_file() for name in ('index.html','admin.html','admin.js','shared.js','app.js','style.css')),'storage':'railway-volume' if os.getenv('RAILWAY_VOLUME_MOUNT_PATH') else 'configured-directory' if os.getenv('KONOMI_DATA_DIR') else 'local','persistent_volume_detected':bool(os.getenv('RAILWAY_VOLUME_MOUNT_PATH')),'key_configured':ai_provider.has_key(),'model':store.settings()['model'],'ai':ai_provider.STATE,'key_recovery':store.KEY_STATE}
 
 @app.post('/api/admin/ai/test')
 async def ai_test(request:Request,user=Depends(admin)):
@@ -209,7 +232,7 @@ class Dish(BaseModel):
     kitchen_priority:float=Field(default=1,ge=.1,le=3,allow_inf_nan=False)
     flavor:dict[str,float]=Field(default_factory=dict)
     pairing_ids:list[str]=Field(default_factory=list,max_length=30)
-    diets:list[Literal['vegan','vegetarian','halal','kosher']]=Field(default_factory=list,max_length=4)
+    diets:list[Literal['vegan','vegetarian','pescatarian','halal','kosher']]=Field(default_factory=list,max_length=4)
     @field_validator('flavor')
     @classmethod
     def valid_flavor(cls,v):
@@ -352,7 +375,7 @@ def overview(user=Depends(admin)):
     with store.db() as c:
         audit=[dict(r) for r in c.execute('SELECT * FROM audit ORDER BY id DESC LIMIT 30')]
         orders=[dict(id=r['id'],at=r['at'],**json.loads(r['payload'])) for r in c.execute('SELECT * FROM orders ORDER BY at DESC LIMIT 20')]
-    return {'total':len(menu),'drafts':sum(d['status']=='draft' for d in menu),'stopped':sum(not d['available'] for d in menu),'unverified':sum(not d['allergens_verified'] for d in menu),'audit':audit,'orders':orders}
+    return {'currency':store.settings()['currency'],'total':len(menu),'drafts':sum(d['status']=='draft' for d in menu),'stopped':sum(not d['available'] for d in menu),'unverified':sum(not d['allergens_verified'] for d in menu),'audit':audit,'orders':orders}
 
 @app.post('/api/admin/qr/preview')
 def qr_preview(body:qr_cards.QRRequest,user=Depends(admin)):
@@ -373,17 +396,19 @@ async def qr_download(body:qr_cards.QRRequest,request:Request,format:Literal['pd
 # Weather: no invented default values. Return null if the provider and cache are unavailable.
 WEATHER={'ts':0,'data':None}
 async def weather(request):
-    slot_hour=datetime.now(ZoneInfo('Europe/Warsaw')).hour
+    cfg=store.settings()
+    slot_hour=datetime.now(ZoneInfo(cfg['timezone'])).hour
     slot='morning' if 6<=slot_hour<11 else 'lunch' if 11<=slot_hour<16 else 'evening' if 16<=slot_hour<23 else 'night'
     if WEATHER['data'] and time.time()-WEATHER['ts']<600: return {**WEATHER['data'],'time_slot':slot}
+    if cfg['latitude'] is None or cfg['longitude'] is None:return {'city':cfg['city'],'temp':None,'condition':'unknown','source':'not-configured','stale':False,'time_slot':slot}
     try:
-        r=await request.app.state.http.get('https://api.open-meteo.com/v1/forecast',params={'latitude':51.7592,'longitude':19.4560,'current':'temperature_2m,precipitation,weather_code'},timeout=5)
+        r=await request.app.state.http.get('https://api.open-meteo.com/v1/forecast',params={'latitude':cfg['latitude'],'longitude':cfg['longitude'],'current':'temperature_2m,precipitation,weather_code'},timeout=5)
         r.raise_for_status(); cur=r.json()['current']; code=int(cur['weather_code'])
         condition='clear' if code==0 else 'cloudy' if code<4 else 'fog' if code<49 else 'drizzle' if code<60 else 'rain' if code<70 or code in [80,81,82] else 'snow' if code<90 else 'storm'
-        data={'city':'Łódź','temp':round(cur['temperature_2m']),'condition':condition,'source':'open-meteo','stale':False}
+        data={'city':cfg['city'],'temp':round(cur['temperature_2m']),'condition':condition,'source':'open-meteo','stale':False}
         WEATHER.update(ts=time.time(),data=data)
     except (httpx.HTTPError,KeyError,ValueError,TypeError):
-        data={**WEATHER['data'],'stale':True} if WEATHER['data'] else {'city':'Łódź','temp':None,'condition':'unknown','source':'unavailable','stale':True}
+        data={**WEATHER['data'],'stale':True} if WEATHER['data'] else {'city':cfg['city'],'temp':None,'condition':'unknown','source':'unavailable','stale':True}
     return {**data,'time_slot':slot}
 
 @app.get('/api/weather')
@@ -392,19 +417,20 @@ async def get_weather(request:Request): return await weather(request)
 @app.get('/api/menu')
 def menu():
     cfg=store.settings()
-    allowed={'id','name','category','price','weight','allergens','desc','image','ingredients','details','tags','available','allergens_verified'}
+    allowed={'id','name','category','price','weight','allergens','desc','image','ingredients','details','tags','available','allergens_verified','diets'}
     dishes=[{k:v for k,v in d.items() if k in allowed} for d in store.dishes() if d['status']=='published']
-    return {'venue':cfg['venue'],'city':cfg['city'],'currency':'PLN','discount':cfg['discount'],'dishes':dishes}
+    return {'venue':cfg['venue'],'city':cfg['city'],'currency':cfg['currency'],'discount':cfg['combo_discount'],'tone':cfg['tone'],'dishes':dishes}
 
 class Message(BaseModel):
     role:Literal['user','assistant']
-    content:str=Field(max_length=4000)
+    content:str=Field(max_length=12000)
+    dishes:list[str]=Field(default_factory=list,max_length=1000)
 class Context(BaseModel):
     # Backward-compatible UI context. NEVER used to choose a reply language.
     lang:str=Field(default='en',max_length=20)
     temp:float|None=None
 class OrderLine(BaseModel):
-    ids:list[str]=Field(min_length=1,max_length=3)
+    ids:list[str]=Field(min_length=1,max_length=100)
     qty:int=Field(ge=1,le=30)
     combo:bool=False
 class Chat(BaseModel):
@@ -414,9 +440,9 @@ class Chat(BaseModel):
     excludes:list[str]=Field(default_factory=list,max_length=40)
     session_id:str|None=Field(default=None,min_length=20,max_length=100)
     request_id:str|None=Field(default=None,min_length=12,max_length=100)
-    diets:list[Literal['vegan','vegetarian','halal','kosher']]=Field(default_factory=list,max_length=4)
+    diets:list[Literal['vegan','vegetarian','pescatarian','halal','kosher']]=Field(default_factory=list,max_length=4)
     event:Literal['message','cart_added']='message'
-    cart:list[OrderLine]=Field(default_factory=list,max_length=40)
+    cart:list[OrderLine]=Field(default_factory=list,max_length=200)
     trigger_id:str|None=Field(default=None,max_length=80)
     table:int|None=Field(default=None,ge=1,le=9999)
     visitor_language:str=Field(default='en',max_length=20)
@@ -427,7 +453,7 @@ def eligible(ex):return dining.eligible(ex)
 
 async def dialogue_generate(request,prompt):
     try:
-        async with asyncio.timeout(30):return await generate(request,prompt)
+        async with asyncio.timeout(48):return await generate(request,prompt)
     except TimeoutError:raise HTTPException(503,'AI_TIMEOUT')
 
 def quote_cart(lines,excludes,diets=()):
@@ -466,24 +492,22 @@ async def reset_constraints(body:ResetConstraints,request:Request):
     return {'ok':True}
 
 def valid_combo(ids,items):
-    if not isinstance(ids,list) or len(ids)!=3 or len(set(str(i) for i in ids))!=3: return False
-    by={d['id']:d for d in items}
-    if any(not isinstance(i,str) or i not in by for i in ids): return False
-    cats=[by[i]['category'] for i in ids]
-    return sum(c in ('soup','starter') for c in cats)==1 and cats.count('main')==1 and sum(c in ('beverage','dessert') for c in cats)==1
+    # White-label combos may be coffee+cake, sushi+tea, or a larger restaurant set.
+    return isinstance(ids,list) and 2<=len(ids)<=100 and len(set(ids))==len(ids) and all(isinstance(i,str) and i in {d['id'] for d in items} for i in ids)
 
 def cents(price): return int((Decimal(str(price))*100).quantize(Decimal('1'),rounding=ROUND_HALF_UP))
 def quote_combo(ids):
     by={d['id']:d for d in store.dishes()}
+    if not valid_combo(ids,dining.eligible()):raise HTTPException(422,'Комбо содержит недоступные или некорректные позиции')
     sub=sum(cents(by[i]['price']) for i in ids)
     discount=store.settings()['discount']
     saving=int((Decimal(sub)*discount/100).quantize(Decimal('1'),rounding=ROUND_HALF_UP))
-    return {'ids':ids,'discount':discount,'subtotal':sub/100,'saving':saving/100,'total':(sub-saving)/100}
+    return {'ids':ids,'discount':discount,'subtotal':sub/100,'saving':saving/100,'total':(sub-saving)/100,'currency':store.settings()['currency']}
 
 class Order(BaseModel):
-    lines:list[OrderLine]=Field(min_length=1,max_length=40)
+    lines:list[OrderLine]=Field(min_length=1,max_length=200)
     excludes:list[str]=Field(default_factory=list,max_length=40)
-    diets:list[Literal['vegan','vegetarian','halal','kosher']]=Field(default_factory=list,max_length=4)
+    diets:list[Literal['vegan','vegetarian','pescatarian','halal','kosher']]=Field(default_factory=list,max_length=4)
     session_id:str|None=Field(default=None,min_length=20,max_length=100)
 
 @app.post('/api/order/quote')
@@ -498,14 +522,14 @@ def order_quote(body:Order):
     for line in body.lines:
         if any(i not in by for i in line.ids): raise HTTPException(409,'Блюдо недоступно, изменено или не подходит под ограничения. Обновите меню и заказ.')
         if line.combo:
-            if not valid_combo(line.ids,items): raise HTTPException(422,'Комбо должно содержать суп, горячее и напиток или десерт')
+            if not valid_combo(line.ids,items): raise HTTPException(422,'Комбо должно содержать минимум две разные доступные позиции')
             q=quote_combo(line.ids); unit=cents(q['total']); sv=cents(q['saving'])
         else:
             if len(line.ids)!=1: raise HTTPException(422,'Обычная строка содержит одно блюдо')
             unit=cents(by[line.ids[0]]['price']); sv=0
         result.append({'names':[by[i]['name'] for i in line.ids],'ids':line.ids,'qty':line.qty,'combo':line.combo,'unit':unit/100,'total':unit*line.qty/100,'saving':sv*line.qty/100})
         total+=unit*line.qty; saving+=sv*line.qty
-    return {'lines':result,'total':total/100,'saving':saving/100,'currency':'PLN'}
+    return {'lines':result,'total':total/100,'saving':saving/100,'currency':store.settings()['currency']}
 
 class SendOrder(Order):
     idempotency_key:str=Field(min_length=12,max_length=100)

@@ -32,7 +32,7 @@ def detect(text,previous=None,names=()):
     if re.search(r'\b(i want|i would|what is|what does|please recommend|please explain|can you|could you|would you)\b',low):return 'en'
     if re.search(r'\b(soup|soups|broth|dessert|drink|fish)\b',low) and not re.search(r'\b(ich|bitte|chcę|poproszę)\b',low):return 'en'
     if re.search(r'\b(suppe|suppen|fisch|getränk|nachtisch)\b',low):return 'de'
-    if re.search(r'\b(ich|ihnen|dazu|empfehle|bitte)\b',low):return 'de'
+    if re.search(r'\b(ich|ihnen|dazu|empfehle|bitte|diese gerichte|aktuellen karte)\b',low):return 'de'
     if re.search(r'\b(zupa|zupy|rosół|żurek|chce|prosze|zurek)\b',low):return 'pl'
     latin=len(re.findall('[A-Za-z]',text))
     native=len(re.findall(r'[^\x00-\x7f\W\d_]',text))

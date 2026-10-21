@@ -8,7 +8,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import store
 
 ALLERGENS={'gluten','pork','lactose','milk','egg','fish','nuts','peanut','soy','sesame','celery','mustard','shellfish','molluscs','sulphites','lupin'}
-DIETS={'vegan','vegetarian','halal','kosher'}
+DIETS={'vegan','vegetarian','pescatarian','halal','kosher'}
 TEXT={
 'en':{'hello':'Welcome. I can explain the dishes, help you choose and suggest a set. Tell me what you enjoy and any dietary restrictions.','none':'I cannot find a verified dish for these requirements. Please confirm the ingredients with your waiter.','safety':'For an allergy, confirm ingredients and cross-contact with your waiter.','recommend':'Here are my suggestions from the available menu. Would you prefer something light or hearty?','upsell':'Would you like {name} to accompany your choice? It is optional; you can add it or decline.','decline':'Of course. I will not suggest any more extras in this session.','accepted':'I have added your chosen accompaniment to the guest check.','expired':'That suggestion is no longer available. Nothing has been added; please check the menu again.','nooffer':'Your choice is complete. I do not have a suitable accompaniment within the current constraints.','clarify':'Tell me about your appetite, budget or dietary requirements, and I will narrow down the menu.','offtopic':'I can help with this restaurant’s menu, ingredients, pairings and guest check. What would you like to eat?','budget':'I cannot find a complete set within that budget. I can suggest individual dishes instead.','combo':'Here is a balanced set from the available dishes. The current price and discount are shown below.','confirm':'There is no active offer to accept. Please choose a dish or tell me what you would like.','unavailable':'That dish is not available to order. I can help choose an alternative.','culture':'Kartacze are large potato dumplings with a meat filling, similar to Lithuanian cepelinai.'},
 'ru':{'hello':'Добро пожаловать. Расскажу о блюдах, помогу выбрать и собрать сет. Подскажите, что любите и есть ли ограничения по питанию.','none':'Не нашёл подтверждённых блюд под эти условия. Уточните состав у официанта — отсутствие отметки не означает безопасность.','safety':'При аллергии подтвердите состав и риск перекрёстного контакта у официанта.','recommend':'Вот варианты из доступного меню. Вам хочется чего-то лёгкого или сытного?','upsell':'К вашему выбору могу предложить {name}. Добавить это дополнение или оставить заказ как есть?','decline':'Конечно, оставим ваш выбор без дополнений. Больше не буду предлагать допродажи в этой сессии.','accepted':'Добавил выбранное дополнение в чек гостя.','expired':'Это предложение уже недоступно. Ничего не добавлено — уточним выбор по актуальному меню.','nooffer':'Подходящего дополнения в рамках ваших ограничений сейчас нет. Оставим выбранный заказ.','clarify':'Подскажите аппетит, бюджет или ограничения по питанию — я сужу выбор до нескольких блюд.','offtopic':'Я помогу с меню этого ресторана, составом, сочетаниями и чеком гостя. Что вам хотелось бы попробовать?','budget':'Полный сет не укладывается в этот бюджет. Могу подобрать отдельные блюда.','combo':'Подобрал сбалансированный сет из доступных блюд. Актуальная цена и скидка указаны ниже.','confirm':'Сейчас нет активного предложения для подтверждения. Выберите блюдо или уточните пожелание.','unavailable':'Эту позицию сейчас нельзя заказать. Помогу выбрать доступную альтернативу.','culture':'Kartacze — крупные картофельные клёцки с мясом, похожие на литовские цеппелины.'},
@@ -52,15 +52,15 @@ def parse_base(text):
     return flags
 
 def eligible(excludes=(),diets=()):
-    ex=list(set(excludes));diet=set(diets)
-    # json_each enforces excluded ingredients before the generative layer sees a menu.
-    sql="SELECT payload,version FROM dishes WHERE json_extract(payload,'$.status')='published' AND json_extract(payload,'$.available')=1"
-    params=[]
-    if ex:
-        sql+=' AND json_extract(payload,\'$.allergens_verified\')=1 AND NOT EXISTS (SELECT 1 FROM json_each(dishes.payload,\'$.allergens\') a WHERE a.value IN ('+','.join('?' for _ in ex)+'))';params=ex
-    if diet:sql+=' AND json_extract(payload,\'$.allergens_verified\')=1'
-    with store.db() as c:rows=c.execute(sql,params).fetchall()
-    return [dict(json.loads(r['payload']),version=r['version']) for r in rows if diet.issubset(set(json.loads(r['payload']).get('diets',[])))]
+    # This is the POST-generation/order effect validator, NOT the LLM context builder.
+    # Unknown verification never makes a known dish disappear; do not claim allergy safety.
+    result=[]
+    for d in store.dishes():
+        if d.get('available') is False or d.get('status','published')!='published':continue
+        if set(excludes)&set(d.get('allergens',[])):continue
+        if any(not diet_matches(d,diet) for diet in diets):continue
+        result.append(d)
+    return result
 
 def cents(value):return int((Decimal(str(value))*100).quantize(Decimal('1'),rounding=ROUND_HALF_UP))
 def weight(d):
@@ -186,7 +186,7 @@ def select(items,prefs,weather):
 
 
 def local_reply(lang,key,items,state=None):
-    state=state or {};names=' / '.join(d['name'] for d in items[:3])
+    state=state or {};names=' / '.join(d['name'] for d in items)
     if key in ('recommend','unavailable') and names:
         introductions={
         'ru':('Начнём с','Этого блюда нет в нашем меню. Вместо него рекомендую'),
@@ -209,3 +209,37 @@ def upsell_line(lang,name):
     'en':f'To accompany your choice, I suggest {name}; adding it is optional.',
     'de':f'Dazu empfehle ich {name}; die Ergänzung ist freiwillig.',
     'uk':f'До цього вибору пропоную {name}; доповнення за бажанням.'}.get(lang,'')
+
+
+MEAT_PATTERN=r'\b(?:meat|pork|beef|veal|chicken|duck|goose|lamb|bacon|ham|sausage|gelatin|gelatine|mięso|mięsem|wieprz\w*|wołow\w*|cielę\w*|kurcz\w*|kaczk\w*|gę[sś]\w*|golonka|wędzon\w*|kiełbas\w*|boczek|szynk\w*|свин\w*|говя\w*|телят\w*|мяс\w*|куриц\w*|утк\w*|гус\w*|бекон|желатин|fleisch|schwein\w*|rind\w*|ente|gans|hähnchen)\b'
+FISH_PATTERN=r'\b(?:fish|trout|salmon|tuna|herring|shrimp|prawn|seafood|pstr[aą]g|śledź|śledzie|losos|łosoś|tuńczyk|krewet\w*|ryb\w*|рыб\w*|риб\w*|форел\w*|сельд\w*|лосос\w*|кревет\w*|fisch|forelle|lachs)\b'
+VEG_PATTERN=r'\b(?:pierogi z kapustą|kapust\w*|grzyb\w*|szpinak\w*|moskole|salad|sałat\w*|warzyw\w*|vegetable|mushroom|spinach|tofu|авокадо|овощ\w*|гриб\w*|шпинат\w*|салат\w*)\b'
+
+def recipe_text(d):
+    desc=d.get('desc',{})
+    desc=' '.join(desc.values()) if isinstance(desc,dict) else str(desc)
+    text=' '.join([d.get('name',''),d.get('ingredients',''),d.get('details',''),desc]).casefold()
+    text=re.sub(r'(?:после|к|after|with|accompan(?:y|ies)|do)\s+(?:(?:сытного|rich|roasted)\s+)?(?:мяса|meat|mięsa)','',text)
+    return re.sub(r'без мяса|без свинины|no meat|meat[- ]free|without meat|bez mięsa|ohne fleisch','',text)
+
+def diet_class(d):
+    facts=recipe_text(d);labels=set(d.get('diets',[]))|set(d.get('tags',[]));allergens=set(d.get('allergens',[]))
+    if 'pork' in allergens or re.search(MEAT_PATTERN,facts):return 'meat'
+    if allergens & {'fish','shellfish','molluscs'} or re.search(FISH_PATTERN,facts):return 'fish'
+    if 'vegan' in labels:return 'vegan'
+    if 'vegetarian' in labels or re.search(VEG_PATTERN,facts):return 'vegetarian'
+    if d.get('category') in ('beverage','dessert'):return 'non_meat'
+    return 'unknown'
+
+def diet_matches(d,diet):
+    kind=diet_class(d);labels=set(d.get('diets',[]))|set(d.get('tags',[]));allergens=set(d.get('allergens',[]))
+    if diet=='pescatarian':return kind in ('fish','vegetarian','vegan','non_meat')
+    if diet=='vegetarian':return kind in ('vegetarian','vegan','non_meat')
+    if diet=='vegan':return kind=='vegan' and not allergens & {'milk','lactose','egg','fish','shellfish','molluscs','pork'}
+    return diet in labels
+
+def guest_preferences(text):
+    prefs=parse(text)
+    low=text.casefold()
+    if re.search(r'без мяс\w*|не ем мяс\w*|without meat|no meat|meat[- ]free|bez mi[eę]sa|ohne fleisch|без м.яс',low) and not prefs['diets'] & {'vegetarian','vegan'}:prefs['diets'].add('pescatarian')
+    return prefs

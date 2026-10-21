@@ -21,6 +21,7 @@ def data_dir():
 def validate_assets():
     front=frontend_dir()
     missing=[name for name in REQUIRED_ASSETS if not (front/name).is_file()]
+    missing += ['backend/'+name for name in ('agent_contract.py','local_agent.py','sommelier.py','dining.py','ai_provider.py') if not (ROOT/'backend'/name).is_file()]
     if missing:
         raise RuntimeError('Release is incomplete: frontend assets missing: '+', '.join(missing)+'. Commit every frontend file and rebuild. Never mount a volume over application code.')
     if not (ROOT/'backend/assets/DejaVuSans.ttf').is_file():

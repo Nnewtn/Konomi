@@ -112,12 +112,12 @@ def parse_response(raw_text):
     if len(text)>=8 and not text.startswith(('{','[','<','```')) and re.search(r'[^\W\d_]',text):
         import dining
         prefs=dining.parse(text)
-        safe=dining.select(dining.eligible(),prefs,{})
+        safe=[d for d in store.dishes() if d.get('available') is not False]
         hits=[d['id'] for d in safe if d['name'].casefold() in text.casefold()]
-        return {'reply':text[:2000],'dishes':hits or [d['id'] for d in safe[:3]],'_plain_text':True}
+        return {'reply':text[:2000],'dishes':hits or [d['id'] for d in safe if d['category']=='soup'] if 'SOUP' in prefs.get('topics',[]) else [],'_plain_text':True}
     raise ValueError('No complete JSON or natural text')
 
-async def generate(request,prompt):
+async def gemini_generate(request,prompt):
     key=require_key();configured=store.settings().get('model','auto')
     chain=[]
     if configured!='auto':chain.append(configured.removeprefix('models/'))
@@ -146,6 +146,7 @@ async def generate(request,prompt):
             if candidate.get('finishReason') not in ('STOP',None):raise ValueError('incomplete or blocked')
             text=''.join(p.get('text','') for p in candidate.get('content',{}).get('parts',[]) if not p.get('thought'))
             parsed=parse_response(text)
+            parsed['_provider']='gemini'
             STATE.update(engine='gemini',last_error=None,last_success=time.time(),resolved_model=model,attempts=attempts)
             return parsed
         except ProviderError:raise
@@ -155,3 +156,46 @@ async def generate(request,prompt):
             last=ProviderError('Gemini вернул неполный, заблокированный или нечитаемый ответ.',None,'invalid_response')
     STATE.update(engine='rules',attempts=attempts)
     raise last or ProviderError('Все доступные модели Gemini временно недоступны.',503,'unavailable')
+
+
+OPENAI_BASE='https://api.openai.com/v1'
+
+def openai_key():
+    return store.api_key('openai')
+
+def has_key():
+    return bool(store.api_key() or openai_key())
+
+async def openai_generate(request,prompt):
+    key=openai_key()
+    if not key:raise ProviderError('OpenAI API key is not configured.',None,'missing_key')
+    if not key.isascii() or any(ord(c)<33 or ord(c)>126 for c in key):raise ProviderError('OpenAI key contains invalid characters.',None,'invalid_key_format')
+    model=store.settings().get('openai_model','gpt-4o-mini')
+    if not re.fullmatch(r'[A-Za-z0-9._:-]{3,100}',model):raise ProviderError('Invalid OpenAI model name.',None,'invalid_model')
+    try:
+        async with asyncio.timeout(18):
+            response=await request.app.state.http.post(OPENAI_BASE+'/chat/completions',headers={'Authorization':'Bearer '+key},json={'model':model,'messages':[{'role':'system','content':prompt},{'role':'user','content':'Produce the requested response as a JSON object using the current guest message in the supplied context.'}],'response_format':{'type':'json_object'},'temperature':0.35,'max_tokens':8192},timeout=18)
+        if response.status_code!=200:
+            kind='authorization' if response.status_code in (401,403) else 'quota' if response.status_code==429 else 'unavailable' if response.status_code>=500 else 'invalid_request'
+            raise ProviderError(f'OpenAI HTTP {response.status_code}. Check model access, credentials and billing.',response.status_code,kind)
+        choices=response.json().get('choices') or []
+        if not choices or choices[0].get('finish_reason') not in ('stop',None):raise ValueError('Incomplete OpenAI response')
+        result=parse_response(choices[0]['message']['content']);result['_provider']='openai'
+        STATE.update(engine='openai',last_error=None,last_success=time.time(),resolved_model=model)
+        return result
+    except (httpx.HTTPError,TimeoutError):raise ProviderError('OpenAI network timeout or connection failure.',None,'network')
+    except (ValueError,TypeError,KeyError,AttributeError):raise ProviderError('OpenAI returned incomplete or invalid JSON/text.',None,'invalid_response')
+
+async def generate(request,prompt):
+    cfg=store.settings();selection=cfg.get('ai_provider','auto')
+    choices=['openai','gemini'] if selection=='openai' else ['gemini','openai']
+    last=None
+    # An explicit preference still permits a configured backup provider.
+    for provider in choices:
+        key=store.api_key() if provider=='gemini' else openai_key()
+        if not key:continue
+        try:
+            return await (gemini_generate(request,prompt) if provider=='gemini' else openai_generate(request,prompt))
+        except HTTPException as exc:last=exc
+    STATE['engine']='rules'
+    raise last or HTTPException(503,'No AI provider configured. Set GEMINI_API_KEY or OPENAI_API_KEY.')

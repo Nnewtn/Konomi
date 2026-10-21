@@ -265,7 +265,7 @@ def bounds(since,until):
         if not value:return default
         try:
             d=datetime.fromisoformat(value)
-            return (d.replace(tzinfo=ZONE) if d.tzinfo is None else d).timestamp()
+            return (d.replace(tzinfo=ZoneInfo(store.settings()['timezone'])) if d.tzinfo is None else d).timestamp()
         except ValueError:raise HTTPException(422,'Дата должна быть в ISO 8601')
     a,b=date(since,0),date(until,time.time()+1)
     if a>b:raise HTTPException(422,'Начало периода позже окончания')
@@ -285,7 +285,7 @@ def report(since=None,until=None,table=None):
     tables=defaultdict(lambda:{'views':0,'confirmed_sales':0,'revenue_cents':0});hours=Counter();filters=Counter();demand=Counter();top=Counter();requested=Counter()
     for e in events:
         table_key=str(e['data'].get('table') or 'unassigned')
-        if e['kind']=='view':tables[table_key]['views']+=1;hours[datetime.fromtimestamp(e['at'],ZONE).hour]+=1
+        if e['kind']=='view':tables[table_key]['views']+=1;hours[datetime.fromtimestamp(e['at'],ZoneInfo(store.settings()['timezone'])).hour]+=1
         if e['kind']=='filter':filters[e['data'].get('filter','unknown')]+=1
         if e['kind']=='ai_chat':
             for topic in set(e['data'].get('topics',[])):demand[topic]+=1
@@ -300,7 +300,7 @@ def report(since=None,until=None,table=None):
     revenue=sum(cents(o['total']) for o in sales)
     def avg(group):return round(sum(cents(o['total']) for o in group)/len(group)/100,2) if group else None
     ai=[o for o in sales if o.get('ai_assisted')];no_ai=[o for o in sales if not o.get('ai_assisted')]
-    return {'period':{'since':a,'until':b,'basis':'order_created_at','timezone':'Europe/Warsaw'},
+    return {'currency':store.settings()['currency'],'period':{'since':a,'until':b,'basis':'order_created_at','timezone':store.settings()['timezone']},
     'funnel':{'views':sum(e['kind']=='view' for e in events),'unique_visitors':len({e['visitor'] for e in events if e['kind']=='view'}),'ai_chats':len({e['visitor'] for e in events if e['kind']=='ai_chat'}),'cart_adds':len({e['visitor'] for e in events if e['kind']=='cart_add'}),'checks_created':len(orders),'confirmed_sales':len(sales)},
     'finance':{'confirmed_revenue':revenue/100,'completed_revenue':sum(cents(o['total']) for o in sales if o['status']=='completed')/100,'pending_value':sum(cents(o['total']) for o in orders if o['status']=='created')/100,'average_ai':avg(ai),'average_no_ai':avg(no_ai),'ai_orders':len(ai),'no_ai_orders':len(no_ai),'combo_units':sum(l['qty'] for o in sales for l in o['lines'] if l['combo']),'upsell_units':sum(1 for o in sales for l in o['lines'] for ident in l['ids'] if ident in o.get('upsell_ids',[]))},
     'tables':[dict(table=k,views=v['views'],confirmed_sales=v['confirmed_sales'],revenue=v['revenue_cents']/100) for k,v in sorted(tables.items(),key=lambda kv:-kv[1]['revenue_cents'])],
